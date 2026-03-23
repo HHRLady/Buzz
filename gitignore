@@ -1,0 +1,36 @@
+# ── DATA FOLDERS — never commit these ─────────────────────────────
+# Raw event data and curated outputs stay on your PC only
+Buzz_Event_Dashboard_*/
+Buzz_Region_Curated/*.xlsx
+Buzz_Region_Curated/*.csv
+Buzz_Region_Curated/region_*.xlsx
+Buzz_Region_Curated/RL_Monthly_Pack.xlsx
+Buzz_Region_Curated/buzzplus_intelligence.xlsx
+Buzz_Region_Curated/sponsor_intelligence.xlsx
+
+# ── WHAT IS ALLOWED in Buzz_Region_Curated ────────────────────────
+# Only the generated HTML host packs go to GitHub
+# (they contain no email addresses — safe to be public)
+!Buzz_Region_Curated/host_packs/*.html
+!Buzz_Region_Curated/RL_Monthly_Pack.html
+
+# ── PYTHON ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+venv/
+.venv/
+
+# ── WINDOWS ───────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+*.lnk
+
+# ── MACOS ─────────────────────────────────────────────────────────
+.DS_Store
+
+# ── EDITOR ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
