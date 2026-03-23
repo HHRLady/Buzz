@@ -1,0 +1,117 @@
+# .github/workflows/build-host-packs.yml
+#
+# Business Buzz – Host Pack Build & Send
+# =======================================
+# Triggered manually from the GitHub Actions tab in your browser.
+# Runs the Python pipeline, publishes HTML to GitHub Pages,
+# then emails each host their personalised pack.
+#
+# To trigger: Actions tab → "Build and Send Host Packs" → Run workflow
+
+name: Build and Send Host Packs
+
+on:
+  # Manual trigger — click the button in GitHub's Actions tab
+  workflow_dispatch:
+    inputs:
+      event_date:
+        description: 'Next event date (e.g. Thursday 17 April 2026) — optional'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Dry run — generate packs but do not send emails'
+        type: boolean
+        required: false
+        default: false
+
+  # Optional: uncomment to run automatically on the 1st of each month at 08:00 UTC
+  # schedule:
+  #   - cron: '0 8 1 * *'
+
+jobs:
+  build-and-send:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+
+    steps:
+      # ── 1. CHECK OUT THE REPO ────────────────────────────────────────
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # ── 2. SET UP PYTHON ─────────────────────────────────────────────
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── 3. INSTALL DEPENDENCIES ──────────────────────────────────────
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. INSTALL CHROMIUM (for PDF conversion) ──────────────────────
+      - name: Install Chromium
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y chromium-browser
+
+      # ── 5. RUN THE REGIONAL BUILD ────────────────────────────────────
+      # This generates all HTML host packs into Buzz_Region_Curated/host_packs/
+      - name: Run regional build pipeline
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.event_date }}" ]; then
+            ARGS="--event-date \"${{ github.event.inputs.event_date }}\""
+          fi
+          python Buzz_Town_HostPack_v2.py --town ALL $ARGS
+
+      # ── 6. COMMIT OUTPUTS BACK TO REPO ───────────────────────────────
+      # This makes the HTML files available for GitHub Pages
+      - name: Commit generated packs
+        run: |
+          git config user.name  "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Buzz_Region_Curated/host_packs/*.html
+          git diff --staged --quiet || git commit -m "Auto: host packs ${{ github.run_number }} $(date +%Y-%m)"
+          git push
+
+      # ── 7. DEPLOY TO GITHUB PAGES ─────────────────────────────────────
+      - name: Upload to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: Buzz_Region_Curated/host_packs
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      # ── 8. SEND EMAILS ───────────────────────────────────────────────
+      - name: Send host pack emails
+        env:
+          SENDGRID_API_KEY:                ${{ secrets.SENDGRID_API_KEY }}
+          SENDER_EMAIL:                    ${{ secrets.SENDER_EMAIL }}
+          SENDER_NAME:                     ${{ secrets.SENDER_NAME }}
+          PAGES_BASE_URL:                  ${{ secrets.PAGES_BASE_URL }}
+          HOST_EMAIL_MARKETHARBOROUGH:     ${{ secrets.HOST_EMAIL_MARKETHARBOROUGH }}
+          HOST_EMAIL_LEICESTER:            ${{ secrets.HOST_EMAIL_LEICESTER }}
+          HOST_EMAIL_LUTTERWORTH:          ${{ secrets.HOST_EMAIL_LUTTERWORTH }}
+          HOST_EMAIL_HINCKLEY:             ${{ secrets.HOST_EMAIL_HINCKLEY }}
+          HOST_EMAIL_LOUGHBOROUGH:         ${{ secrets.HOST_EMAIL_LOUGHBOROUGH }}
+        run: |
+          DRY_RUN=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN="--dry-run"
+          fi
+          python send_packs.py --town ALL $DRY_RUN
+
+      # ── 9. SUMMARY ───────────────────────────────────────────────────
+      - name: Print summary
+        run: |
+          echo "## Host Packs Built and Sent" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Month: $(date +'%B %Y')" >> $GITHUB_STEP_SUMMARY
+          echo "- Event date: ${{ github.event.inputs.event_date || 'not specified' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Dry run: ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Towns: Market Harborough, Leicester, Lutterworth, Hinckley, Loughborough" >> $GITHUB_STEP_SUMMARY
