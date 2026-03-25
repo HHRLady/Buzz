@@ -61,11 +61,12 @@ jobs:
       # This generates all HTML host packs into Buzz_Region_Curated/host_packs/
       - name: Run regional build pipeline
         run: |
-          ARGS=""
-          if [ -n "${{ github.event.inputs.event_date }}" ]; then
-            ARGS="--event-date \"${{ github.event.inputs.event_date }}\""
+          EVENT_DATE="${{ github.event.inputs.event_date }}"
+          if [ -n "$EVENT_DATE" ]; then
+            python Buzz_Town_HostPack_v2.py --town ALL --event-date "$EVENT_DATE"
+          else
+            python Buzz_Town_HostPack_v2.py --town ALL
           fi
-          python Buzz_Town_HostPack_v2.py --town ALL $ARGS
 
       # ── 6. COMMIT OUTPUTS BACK TO REPO ───────────────────────────────
       # This makes the HTML files available for GitHub Pages
