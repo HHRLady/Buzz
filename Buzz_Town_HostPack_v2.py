@@ -14,23 +14,19 @@ Output per town  (in  Buzz_Region_Curated/host_packs/):
 Usage:
     python Buzz_Town_HostPack_v2.py --town Loughborough
     python Buzz_Town_HostPack_v2.py --town ALL
-    python Buzz_Town_HostPack_v2.py --town ALL --event-date "Thursday 20 March 2026"
+    python Buzz_Town_HostPack_v2.py --town ALL --event-date "Thursday 17 April 2026"
 
-Design rules:
-    - Host first name pulled from roles_<TownCode>.csv (role == Host, no end_date)
-    - Regulars  : 2+ months attended, excludes team roles, capped at 10
-    - Lapsed    : 2+ months ever, last seen > 3 months ago, capped at 8
-    - Prospects : sourced from regional buzzplus_intelligence.xlsx, strong first, capped at 8
-    - Sponsors  : from sponsors_<TownCode>.csv
-    - Snapshot  : from region_dashboard.xlsx Town_Overview row
-    - All logic is attendance-based only (no payment fields used)
+Sections:
+    1. Faces to recognise this month (regulars)
+    2. Worth a call before the event (lapsed)
+    3. Buzz Plus conversations (prospects)
+    4. Sponsors
+    5. Last month's 3-2-1 (in-room interaction data)
 """
 
 import argparse
-import re
 from datetime import date
 from pathlib import Path
-from textwrap import dedent
 from typing import Optional
 
 import pandas as pd
@@ -63,9 +59,10 @@ TOWNS = {
     "Loughborough":     ("Buzz_Event_Dashboard_Loughborough",     "Loughborough"),
 }
 
-BUZZPLUS_FILE  = REGION_CURATED / "buzzplus_intelligence.xlsx"
-SPONSOR_FILE   = REGION_CURATED / "sponsor_intelligence.xlsx"
-DASHBOARD_FILE = REGION_CURATED / "region_dashboard.xlsx"
+BUZZPLUS_FILE   = REGION_CURATED / "buzzplus_intelligence.xlsx"
+SPONSOR_FILE    = REGION_CURATED / "sponsor_intelligence.xlsx"
+DASHBOARD_FILE  = REGION_CURATED / "region_dashboard.xlsx"
+INTEL_321_FILE  = REGION_CURATED / "buzz_321_intelligence.xlsx"
 
 MAX_REGULARS  = 10
 MAX_LAPSED    =  8
@@ -74,17 +71,13 @@ MAX_PROSPECTS =  8
 TODAY       = date.today()
 MONTH_LABEL = TODAY.strftime("%B %Y")
 
-# ------------------------------------------------------------------
-# OFFICIAL BUSINESS BUZZ BRAND COLOURS (from portal.mybuzz.uk)
-# ------------------------------------------------------------------
-# "Blue" (teal): #00A19A  |  Orange: #F39200
-# Pink:          #D60B52  |  Green (lime): #B6BD00
+# Official Business Buzz brand colours
 TEAL   = "#00A19A"
 ORANGE = "#F39200"
 PINK   = "#D60B52"
 LIME   = "#B6BD00"
 
-TEAL_BG  = "#E6F7F6"   # light teal for avatars/badges
+TEAL_BG  = "#E6F7F6"
 TEAL_FG  = "#007A74"
 ORG_BG   = "#FEF0DA"
 ORG_FG   = "#9A5800"
@@ -147,11 +140,17 @@ def _initials(name: str) -> str:
 def _title_case(name: str) -> str:
     if not name:
         return ""
-    # Leave mixed-case as-is; fix ALL CAPS or all lower
     stripped = str(name).strip()
     if stripped == stripped.upper() or stripped == stripped.lower():
         return stripped.title()
     return stripped
+
+
+def _pct(val) -> str:
+    try:
+        return f"{round(float(val) * 100)}%"
+    except Exception:
+        return "—"
 
 
 # ------------------------------------------------------------------
@@ -251,20 +250,16 @@ def build_regulars(attendance: pd.DataFrame, team_emails: set) -> list:
         return []
     if not {"email", "event_month"}.issubset(attendance.columns):
         return []
-
     BAD = {"test@test", "nan", ""}
     att = attendance[~attendance["email"].isin(team_emails | BAD)].copy()
-
     agg = {}
     if "name" in att.columns:
         agg["name"] = ("name", "last")
     if "company" in att.columns:
         agg["company"] = ("company", "last")
     agg["months_ever"] = ("event_month", "nunique")
-
     grp = att.groupby("email").agg(**{k: v for k, v in agg.items()}).reset_index()
     grp = grp[grp["months_ever"] >= 2].sort_values("months_ever", ascending=False).head(MAX_REGULARS)
-
     result = []
     for _, row in grp.iterrows():
         name    = _title_case(str(row.get("name", "") or ""))
@@ -286,30 +281,25 @@ def build_lapsed(attendance: pd.DataFrame, team_emails: set) -> list:
         return []
     if not {"email", "event_month"}.issubset(attendance.columns):
         return []
-
     BAD = {"test@test", "nan", ""}
     att = attendance[~attendance["email"].isin(team_emails | BAD)].copy()
-
     periods = att["event_month"].apply(_parse_period).dropna()
     if periods.empty:
         return []
     latest   = periods.max()
-    cutoff   = latest - 3   # lapsed = not seen in last 3 months
-    too_old  = latest - 24  # ignore anyone gone more than 2 years
-
+    cutoff   = latest - 3
+    too_old  = latest - 24
     agg = {"months_ever": ("event_month", "nunique"), "last_month": ("event_month", "max")}
     if "name" in att.columns:
         agg["name"] = ("name", "last")
     if "company" in att.columns:
         agg["company"] = ("company", "last")
-
     grp = att.groupby("email").agg(**agg).reset_index()
     grp["last_period"] = grp["last_month"].apply(_parse_period)
     lapsed = grp[
         (grp["months_ever"] >= 2) &
         (grp["last_period"].apply(lambda p: p is not None and too_old <= p <= cutoff))
     ].sort_values("last_month", ascending=False).head(MAX_LAPSED)
-
     result = []
     for _, row in lapsed.iterrows():
         name    = _title_case(str(row.get("name", "") or ""))
@@ -336,7 +326,6 @@ def build_prospects(town_code: str, town_label: str) -> list:
     df = _filter_town(df, town_code, town_label)
     if df.empty:
         return []
-
     tier_order = {"buzz plus strong": 0, "buzz plus possible": 1}
     if "prospect_tier" in df.columns:
         df["_t"] = df["prospect_tier"].astype(str).str.strip().str.lower().map(tier_order).fillna(2)
@@ -345,7 +334,6 @@ def build_prospects(town_code: str, town_label: str) -> list:
     if "visits_12m" in df.columns:
         df["visits_12m"] = pd.to_numeric(df["visits_12m"], errors="coerce").fillna(0)
     df = df.sort_values(["_t", "visits_12m"], ascending=[True, False]).head(MAX_PROSPECTS)
-
     result = []
     for _, row in df.iterrows():
         name    = _title_case(str(row.get("person_name", "") or ""))
@@ -367,13 +355,11 @@ def build_prospects(town_code: str, town_label: str) -> list:
 
 def build_sponsors(town_base: Path, town_code: str, town_label: str) -> tuple:
     df = load_sponsors_csv(town_base, town_code)
-    cap_df   = _nc(_safe_excel(SPONSOR_FILE, "Sponsor_Capacity"))
-    cap_row  = _filter_town(cap_df, town_code, town_label)
+    cap_df     = _nc(_safe_excel(SPONSOR_FILE, "Sponsor_Capacity"))
+    cap_row    = _filter_town(cap_df, town_code, town_label)
     slots_left = _first_int(cap_row, "capacity_left")
-
     if df.empty:
         return [], slots_left
-
     active = []
     for _, row in df.iterrows():
         end = str(row.get("end_date", "") or "").strip()
@@ -396,8 +382,57 @@ def build_sponsors(town_base: Path, town_code: str, town_label: str) -> tuple:
                 renewal = end
         if company and company.lower() not in ("nan", ""):
             active.append(dict(company=company, contact=contact, renewal=renewal))
-
     return active, slots_left
+
+
+def build_321(town_code: str, town_label: str) -> Optional[dict]:
+    """Load latest month's 3-2-1 data for this town."""
+    df = _nc(_safe_excel(INTEL_321_FILE, "Town_Month_Summary"))
+    df = _filter_town(df, town_code, town_label)
+    if df.empty:
+        return None
+    if "event_month_key" in df.columns:
+        df = df.sort_values("event_month_key", ascending=False)
+    row = df.iloc[0]
+
+    def _n(col):
+        return int(pd.to_numeric(row.get(col, 0), errors="coerce") or 0)
+
+    def _f(col):
+        v = pd.to_numeric(row.get(col, None), errors="coerce")
+        return float(v) if pd.notna(v) else None
+
+    # Pull host notes from event level
+    notes        = ""
+    submitted_by = ""
+    ev_df = _nc(_safe_excel(INTEL_321_FILE, "Event_Level"))
+    ev_df = _filter_town(ev_df, town_code, town_label)
+    if not ev_df.empty and "event_month_key" in ev_df.columns:
+        latest_month = str(row.get("event_month_key", ""))
+        ev_row = ev_df[ev_df["event_month_key"].astype(str) == latest_month]
+        if not ev_row.empty:
+            notes        = str(ev_row.iloc[0].get("notes", "") or "").strip()
+            submitted_by = str(ev_row.iloc[0].get("submitted_by", "") or "").strip()
+            if notes.lower() in ("nan", "none", ""):
+                notes = ""
+            if submitted_by.lower() in ("nan", "none", ""):
+                submitted_by = ""
+
+    return dict(
+        event_month      = str(row.get("event_month", "") or ""),
+        in_room          = _n("total_in_room"),
+        tracker_users    = _n("total_tracker_users"),
+        met_3_new        = _n("total_met_3_new"),
+        one_2_ones       = _n("total_one_2_ones"),
+        brought_some1    = _n("total_brought_some1"),
+        interaction_rate = _f("avg_interaction_rate"),
+        met_new_rate     = _f("avg_met_new_rate"),
+        one_to_one_rate  = _f("avg_one_to_one_rate"),
+        brought_rate     = _f("avg_brought_someone_rate"),
+        coverage_bucket  = str(row.get("coverage_bucket", "") or ""),
+        notes            = notes,
+        submitted_by     = submitted_by,
+    )
 
 
 # ------------------------------------------------------------------
@@ -408,12 +443,19 @@ def _empty(msg: str) -> str:
     return f'<p class="empty-msg">{msg}</p>'
 
 
+def _coverage_colours(bucket: str):
+    return {
+        "Strong":   (LIME_BG,  LIME_FG,  LIME),
+        "Moderate": (ORG_BG,   ORG_FG,   ORANGE),
+        "Low":      (PINK_BG,  PINK_FG,  PINK),
+    }.get(bucket, ("#F3F4F6", "#6B7280", "#9CA3AF"))
+
+
 def render_html(town_label, host_name, snap, regulars, lapsed,
-                prospects, sponsors, slots_left, event_date=None):
+                prospects, sponsors, slots_left, data_321=None, event_date=None):
 
     event_line = f" &nbsp;&middot;&nbsp; Next event: {event_date}" if event_date else ""
 
-    # Snapshot cards — each topped with its brand colour
     def sc(label, value, colour):
         return (f'<div class="snap-card" style="border-top:4px solid {colour}">'
                 f'<div class="snap-label">{label}</div>'
@@ -493,7 +535,7 @@ def render_html(town_label, host_name, snap, regulars, lapsed,
         p3 = (f'<div class="prompt-box" style="border-left-color:{PINK}">'
               f'<div class="prompt-label" style="color:{PINK}">Suggested approach</div>'
               'These visitors clearly love Buzz &#8212; they&rsquo;ve been coming regularly. '
-              'A natural, low-pressure mention is all it takes: '
+              'Catch them during the event &#8212; a natural, low-pressure mention between 10am and noon is all it takes: '
               '&ldquo;Have you heard about Buzz Plus? Given how often you&rsquo;re here, '
               'it might be worth a look.&rdquo;'
               '</div>')
@@ -520,6 +562,48 @@ def render_html(town_label, host_name, snap, regulars, lapsed,
 
     sec4_desc = (f"{slots_left} slot{'s' if slots_left != 1 else ''} still available"
                  if slots_left > 0 else "All slots filled")
+
+    # Section 5 – 3-2-1
+    if data_321:
+        d = data_321
+        cov_bg, cov_fg, cov_border = _coverage_colours(d["coverage_bucket"])
+
+        def mc(label, value, colour):
+            return (f'<div style="background:#FAFAFA;border:1px solid #E5E7EB;border-top:3px solid {colour};'
+                    f'border-radius:8px;padding:10px 12px">'
+                    f'<div style="font-size:10px;color:#6B7280;margin-bottom:4px">{label}</div>'
+                    f'<div style="font-size:20px;font-weight:700;color:{colour}">{value}</div>'
+                    f'</div>')
+
+        s321_metrics = (
+            mc("In the room",          d["in_room"],                      TEAL)
+            + mc("Used 3-2-1 tracker", d["tracker_users"],                TEAL)
+            + mc("Met 3 new people",   d["met_3_new"],                    ORANGE)
+            + mc("Had a 1-2-1",        d["one_2_ones"],                   ORANGE)
+            + mc("Brought someone",    d["brought_some1"],                PINK)
+            + mc("Interaction rate",   _pct(d["interaction_rate"]),       cov_border)
+        )
+
+        notes_html = ""
+        if d["notes"]:
+            by = f" &mdash; {d['submitted_by']}" if d["submitted_by"] else ""
+            notes_html = (f'<div class="prompt-box" style="border-left-color:{TEAL};margin-top:12px">'
+                          f'<div class="prompt-label" style="color:{TEAL}">Host note{by}</div>'
+                          f'{d["notes"]}'
+                          f'</div>')
+
+        coverage_badge = (f'<span style="background:{cov_bg};color:{cov_fg};font-size:10px;font-weight:700;'
+                          f'padding:2px 8px;border-radius:999px;margin-left:auto">'
+                          f'{d["coverage_bucket"]}</span>')
+
+        s5         = (f'<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));'
+                      f'gap:8px;margin-bottom:4px">{s321_metrics}</div>{notes_html}')
+        sec5_desc  = d["event_month"]
+        sec5_extra = coverage_badge
+    else:
+        s5         = _empty("No 3-2-1 data available for this town yet.")
+        sec5_desc  = "In-room interaction data"
+        sec5_extra = ""
 
     generated = TODAY.strftime("%-d %b %Y")
 
@@ -597,7 +681,7 @@ body{{font-family:'Century Gothic','Gill Sans',Calibri,sans-serif;font-size:14px
       </div>
       <div class="header-date">Generated {generated}</div>
     </div>
-    <div class="greeting">Hi {host_name} &#8212; here&rsquo;s your monthly briefing. Three things to do before the event, and a few faces to know on the day. This pack is for your eyes only &#8212; please don&rsquo;t share or forward it.</div>
+    <div class="greeting">Hi {host_name} &#8212; here&rsquo;s your monthly briefing. Three things to do before the event, a few faces to know on the day, and last month&rsquo;s 3-2-1 numbers. This pack is for your eyes only &#8212; please don&rsquo;t share or forward it.</div>
   </div>
   <div class="colour-bar"><div class="cb1"></div><div class="cb2"></div><div class="cb3"></div><div class="cb4"></div></div>
   <div class="body">
@@ -634,6 +718,15 @@ body{{font-family:'Century Gothic','Gill Sans',Calibri,sans-serif;font-size:14px
       </div>
       {spon_rows}
     </div>
+    <div class="section">
+      <div class="section-header">
+        <div class="sec-num" style="background:{TEAL}">5</div>
+        <div class="sec-title">Last month&rsquo;s 3-2-1</div>
+        <div class="sec-desc">{sec5_desc}</div>
+        {sec5_extra}
+      </div>
+      {s5}
+    </div>
     <div class="footer">
       <span>Business Buzz &nbsp;&middot;&nbsp; Leicestershire &amp; Rutland region</span>
       <span>For host use only &nbsp;&middot;&nbsp; not for distribution</span>
@@ -648,7 +741,8 @@ body{{font-family:'Century Gothic','Gill Sans',Calibri,sans-serif;font-size:14px
 # EMAIL TEXT RENDERER
 # ------------------------------------------------------------------
 
-def render_email(town_label, host_name, snap, regulars, lapsed, prospects, slots_left):
+def render_email(town_label, host_name, snap, regulars, lapsed, prospects,
+                 slots_left, data_321=None):
     lines = [
         f"Hi {host_name},",
         "",
@@ -692,10 +786,26 @@ def render_email(town_label, host_name, snap, regulars, lapsed, prospects, slots
         lines += [
             "",
             '  Suggested approach: "Have you heard about Buzz Plus? Given how often',
-            '  you\'re here, it might be worth a look."',
+            '  you\'re here, it might be worth a look." Catch them during the event (10am-noon).',
         ]
     else:
         lines.append("  No Buzz Plus prospects yet.")
+
+    if data_321:
+        d = data_321
+        lines += [
+            "",
+            f"5. LAST MONTH'S 3-2-1 ({d['event_month']})",
+            f"  In the room:          {d['in_room']}",
+            f"  Used 3-2-1 tracker:   {d['tracker_users']}",
+            f"  Met 3 new people:     {d['met_3_new']}",
+            f"  Had a 1-2-1:          {d['one_2_ones']}",
+            f"  Brought someone:      {d['brought_some1']}",
+            f"  Interaction rate:     {_pct(d['interaction_rate'])} ({d['coverage_bucket']})",
+        ]
+        if d["notes"]:
+            by = f" ({d['submitted_by']})" if d["submitted_by"] else ""
+            lines += ["", f"  Host note{by}: {d['notes']}"]
 
     lines += [
         "",
@@ -728,24 +838,24 @@ def build_host_pack(town_code: str, event_date: Optional[str] = None) -> None:
     team_emails = load_team_emails(town_base, town_code)
     attendance  = load_attendance(monthly_dir)
 
-    snap               = build_snapshot(town_code, town_label)
-    regulars           = build_regulars(attendance, team_emails)
-    lapsed             = build_lapsed(attendance, team_emails)
-    prospects          = build_prospects(town_code, town_label)
-    sponsors, slots    = build_sponsors(town_base, town_code, town_label)
+    snap            = build_snapshot(town_code, town_label)
+    regulars        = build_regulars(attendance, team_emails)
+    lapsed          = build_lapsed(attendance, team_emails)
+    prospects       = build_prospects(town_code, town_label)
+    sponsors, slots = build_sponsors(town_base, town_code, town_label)
+    data_321        = build_321(town_code, town_label)
 
-    # Prefer slots_left from dashboard snapshot over sponsors CSV count
     slots_left = snap["slots_left"] if snap["slots_left"] > 0 else slots
 
     html_str  = render_html(town_label, host_name, snap, regulars, lapsed,
-                            prospects, sponsors, slots_left, event_date)
+                            prospects, sponsors, slots_left, data_321, event_date)
     email_str = render_email(town_label, host_name, snap, regulars, lapsed,
-                             prospects, slots_left)
+                             prospects, slots_left, data_321)
 
     out_dir = REGION_CURATED / "host_packs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    safe = town_label.replace(" ", "_")
+    safe       = town_label.replace(" ", "_")
     html_path  = out_dir / f"HostPack_{safe}.html"
     email_path = out_dir / f"HostPack_{safe}_email.txt"
 
@@ -766,7 +876,7 @@ def main() -> None:
     ap.add_argument("--town", default="ALL",
                     help="Town code (e.g. Loughborough) or ALL")
     ap.add_argument("--event-date", default=None,
-                    help="Optional next event date shown in header, e.g. 'Thursday 20 March 2026'")
+                    help="Optional next event date shown in header, e.g. 'Thursday 17 April 2026'")
     args = ap.parse_args()
 
     town = args.town.strip()
