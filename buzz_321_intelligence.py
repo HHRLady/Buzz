@@ -2,26 +2,6 @@ import argparse
 from pathlib import Path
 import pandas as pd
 
-# ==========================================================
-# Business Buzz – 3-2-1 Intelligence
-# ==========================================================
-# Purpose
-# - Reads the first tab / 321_Tracker tab from the Buzz 3-2-1 tracker
-# - Cleans and standardises the data
-# - Outputs regional event-level and summary intelligence
-#
-# Input location
-#   <RegionRoot>\Buzz_Region_Ref\
-#
-# Preferred filenames checked in this order
-#   - Buzz_321_Tracker.xlsx
-#   - LRBuzz 321 Tracker.xlsx
-#
-# Output
-#   <RegionRoot>\Buzz_Region_Curated\buzz_321_intelligence.xlsx
-#   <RegionRoot>\Buzz_Region_Curated\buzz_321_event_level.csv
-# ==========================================================
-
 BASE = Path(__file__).resolve().parent
 REGION_REF = BASE / "Buzz_Region_Ref"
 REGION_CURATED = BASE / "Buzz_Region_Curated"
@@ -76,37 +56,6 @@ def _to_numeric(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df
 
 
-def _make_empty_outputs(reason: str) -> None:
-    REGION_CURATED.mkdir(parents=True, exist_ok=True)
-
-    event_cols = [
-        "town_code", "town_name", "venue_raw", "event_date", "event_month_key", "event_month",
-        "in_room", "tracker_users", "met_3_new", "one_2_ones", "brought_some1",
-        "hosting_team", "buzz_in", "buzz_out", "net_room_flow",
-        "interaction_rate", "met_new_rate", "one_to_one_rate", "brought_someone_rate",
-        "notes", "submitted_by", "status", "coverage_flag", "quality_flag"
-    ]
-    summary_cols = [
-        "town_code", "town_name", "event_month_key", "event_month",
-        "events_with_321_data", "total_in_room", "total_tracker_users",
-        "total_met_3_new", "total_one_2_ones", "total_brought_some1",
-        "avg_interaction_rate", "avg_met_new_rate", "avg_one_to_one_rate", "avg_brought_someone_rate",
-        "coverage_bucket"
-    ]
-    quality = pd.DataFrame([{"message": reason}])
-
-    with pd.ExcelWriter(OUT_XLSX, engine="xlsxwriter") as writer:
-        pd.DataFrame(columns=event_cols).to_excel(writer, sheet_name="Event_Level", index=False)
-        pd.DataFrame(columns=summary_cols).to_excel(writer, sheet_name="Town_Month_Summary", index=False)
-        pd.DataFrame(columns=summary_cols[:-2]).to_excel(writer, sheet_name="Town_Summary", index=False)
-        quality.to_excel(writer, sheet_name="Data_Quality", index=False)
-
-    pd.DataFrame(columns=event_cols).to_csv(OUT_CSV, index=False)
-    print(f"[INFO] {reason}")
-    print(f"[OK] Wrote {OUT_XLSX}")
-    print(f"[OK] Wrote {OUT_CSV}")
-
-
 def _coverage_bucket(rate: float) -> str:
     if pd.isna(rate):
         return "No room count"
@@ -115,6 +64,46 @@ def _coverage_bucket(rate: float) -> str:
     if rate >= 0.20:
         return "Moderate"
     return "Low"
+
+
+def _empty_event_cols() -> list[str]:
+    return [
+        "town_code", "town_name", "venue_raw", "event_date", "event_month_key", "event_month",
+        "in_room", "tracker_users", "met_3_new", "one_2_ones", "brought_some1",
+        "hosting_team", "buzz_in", "buzz_out", "net_room_flow",
+        "interaction_rate", "met_new_rate", "one_to_one_rate", "brought_someone_rate",
+        "notes", "submitted_by", "status", "coverage_flag", "quality_flag"
+    ]
+
+
+def _empty_summary_cols() -> list[str]:
+    return [
+        "town_code", "town_name", "event_month_key", "event_month", "latest_event_date",
+        "events_with_321_data", "total_in_room", "total_tracker_users",
+        "total_met_3_new", "total_one_2_ones", "total_brought_some1",
+        "avg_interaction_rate", "avg_met_new_rate", "avg_one_to_one_rate", "avg_brought_someone_rate",
+        "coverage_bucket"
+    ]
+
+
+def _make_empty_outputs(reason: str) -> None:
+    REGION_CURATED.mkdir(parents=True, exist_ok=True)
+    event_cols = _empty_event_cols()
+    summary_cols = _empty_summary_cols()
+    quality = pd.DataFrame([{"message": reason}])
+
+    with pd.ExcelWriter(OUT_XLSX, engine="xlsxwriter", datetime_format="dd/mm/yyyy") as writer:
+        pd.DataFrame(columns=event_cols).to_excel(writer, sheet_name="Event_Level", index=False)
+        pd.DataFrame(columns=summary_cols).to_excel(writer, sheet_name="Town_Month_Summary", index=False)
+        pd.DataFrame(columns=[c for c in summary_cols if c not in {"event_month_key", "event_month"}]).to_excel(
+            writer, sheet_name="Town_Summary", index=False
+        )
+        quality.to_excel(writer, sheet_name="Data_Quality", index=False)
+
+    pd.DataFrame(columns=event_cols).to_csv(OUT_CSV, index=False)
+    print(f"[INFO] {reason}")
+    print(f"[OK] Wrote {OUT_XLSX}")
+    print(f"[OK] Wrote {OUT_CSV}")
 
 
 def build_321_intelligence(input_file: Path) -> None:
@@ -130,52 +119,41 @@ def build_321_intelligence(input_file: Path) -> None:
 
     raw = _normalise_cols(raw)
     source_rows = len(raw)
-
     if raw.empty:
         _make_empty_outputs("3-2-1 tracker is empty.")
         return
 
-    # Keep status and required fields
     raw["status"] = raw.get("status", "").astype(str).str.strip()
     submitted = raw[raw["status"].str.lower() == "submitted"].copy()
-
     submitted_rows = len(submitted)
 
     submitted["venue_raw"] = submitted.get("venue", "").astype(str).str.strip()
     submitted["date"] = pd.to_datetime(submitted.get("date"), errors="coerce", dayfirst=True)
     submitted["timestamp"] = pd.to_datetime(submitted.get("timestamp"), errors="coerce", dayfirst=True)
 
-    # Required-field rule
-    working = submitted[(submitted["venue_raw"] != "") & submitted["date"].notna()].copy()
+    required_valid = submitted[(submitted["venue_raw"] != "") & submitted["date"].notna()].copy()
 
-    # Numeric cleaning
     numeric_cols = [
         "met_3_new", "one_2_ones", "brought_some1", "in_room",
         "hosting_team", "buzz_in", "buzz_out", "321tracker_users"
     ]
-    working = _to_numeric(working, numeric_cols)
+    working = _to_numeric(required_valid.copy(), numeric_cols)
 
-    # Town mapping
     town_pairs = working["venue_raw"].apply(_canonicalise_town)
     working["town_code"] = town_pairs.apply(lambda x: x[0])
     working["town_name"] = town_pairs.apply(lambda x: x[1])
     working = working[working["town_code"] != ""].copy()
+    mapped_rows = len(working)
 
-    # Deduplicate by town + event_date, keeping latest timestamp if present
     working = working.sort_values(by=["town_code", "date", "timestamp"], ascending=[True, True, True])
     before_dupes = len(working)
     working = working.drop_duplicates(subset=["town_code", "date"], keep="last").copy()
     deduped_count = before_dupes - len(working)
 
-    # Derived date fields
     working["event_date"] = working["date"].dt.normalize()
     working["event_month_key"] = working["date"].dt.strftime("%Y-%m")
     working["event_month"] = working["date"].dt.strftime("%B %Y")
-
-    # Rename tracker users
     working["tracker_users"] = working["321tracker_users"]
-
-    # Derived metrics
     working["net_room_flow"] = working["buzz_in"] - working["buzz_out"]
 
     def _safe_rate(num_col: str) -> pd.Series:
@@ -188,8 +166,6 @@ def build_321_intelligence(input_file: Path) -> None:
     working["met_new_rate"] = _safe_rate("met_3_new")
     working["one_to_one_rate"] = _safe_rate("one_2_ones")
     working["brought_someone_rate"] = _safe_rate("brought_some1")
-
-    # Flags
     working["coverage_flag"] = working["interaction_rate"].apply(_coverage_bucket)
 
     def _quality_flag(row) -> str:
@@ -208,17 +184,12 @@ def build_321_intelligence(input_file: Path) -> None:
 
     working["quality_flag"] = working.apply(_quality_flag, axis=1)
 
-    event_level = working[[
-        "town_code", "town_name", "venue_raw", "event_date", "event_month_key", "event_month",
-        "in_room", "tracker_users", "met_3_new", "one_2_ones", "brought_some1",
-        "hosting_team", "buzz_in", "buzz_out", "net_room_flow",
-        "interaction_rate", "met_new_rate", "one_to_one_rate", "brought_someone_rate",
-        "notes", "submitted_by", "status", "coverage_flag", "quality_flag"
-    ]].copy()
+    event_level = working[_empty_event_cols()].copy()
 
     town_month_summary = (
         event_level.groupby(["town_code", "town_name", "event_month_key", "event_month"], dropna=False)
         .agg(
+            latest_event_date=("event_date", "max"),
             events_with_321_data=("event_date", "count"),
             total_in_room=("in_room", "sum"),
             total_tracker_users=("tracker_users", "sum"),
@@ -233,10 +204,12 @@ def build_321_intelligence(input_file: Path) -> None:
         .reset_index()
     )
     town_month_summary["coverage_bucket"] = town_month_summary["avg_interaction_rate"].apply(_coverage_bucket)
+    town_month_summary = town_month_summary[_empty_summary_cols()].copy()
 
     town_summary = (
         event_level.groupby(["town_code", "town_name"], dropna=False)
         .agg(
+            latest_event_date=("event_date", "max"),
             events_with_321_data=("event_date", "count"),
             total_in_room=("in_room", "sum"),
             total_tracker_users=("tracker_users", "sum"),
@@ -250,16 +223,16 @@ def build_321_intelligence(input_file: Path) -> None:
         )
         .reset_index()
     )
-
-    dropped_missing_required = submitted_rows - len(submitted[(submitted.get("venue", "").astype(str).str.strip() != "") & pd.to_datetime(submitted.get("date"), errors="coerce", dayfirst=True).notna()])
-    dropped_unknown_town = len(submitted[(submitted.get("venue", "").astype(str).str.strip() != "") & pd.to_datetime(submitted.get("date"), errors="coerce", dayfirst=True).notna()]) - before_dupes
+    town_summary["coverage_bucket"] = town_summary["avg_interaction_rate"].apply(_coverage_bucket)
 
     quality = pd.DataFrame([
         {"metric": "source_rows", "value": source_rows},
         {"metric": "submitted_rows", "value": submitted_rows},
+        {"metric": "rows_with_required_fields", "value": len(required_valid)},
+        {"metric": "mapped_town_rows", "value": mapped_rows},
         {"metric": "valid_rows_used", "value": len(event_level)},
-        {"metric": "dropped_missing_required", "value": max(dropped_missing_required, 0)},
-        {"metric": "dropped_unknown_or_unmapped_town", "value": max(dropped_unknown_town, 0)},
+        {"metric": "dropped_missing_required", "value": submitted_rows - len(required_valid)},
+        {"metric": "dropped_unknown_or_unmapped_town", "value": len(required_valid) - mapped_rows},
         {"metric": "deduplicated_rows_removed", "value": deduped_count},
         {"metric": "input_file", "value": str(input_file)},
     ])
@@ -269,6 +242,28 @@ def build_321_intelligence(input_file: Path) -> None:
         town_month_summary.to_excel(writer, sheet_name="Town_Month_Summary", index=False)
         town_summary.to_excel(writer, sheet_name="Town_Summary", index=False)
         quality.to_excel(writer, sheet_name="Data_Quality", index=False)
+
+        workbook = writer.book
+        pct_fmt = workbook.add_format({"num_format": "0%"})
+        date_fmt = workbook.add_format({"num_format": "dd/mm/yyyy"})
+
+        for sheet_name, df in {
+            "Event_Level": event_level,
+            "Town_Month_Summary": town_month_summary,
+            "Town_Summary": town_summary,
+        }.items():
+            ws = writer.sheets[sheet_name]
+            for i, col in enumerate(df.columns):
+                width = max(len(str(col)), 14)
+                if col in {"notes", "quality_flag"}:
+                    width = 42
+                elif col in {"submitted_by", "venue_raw"}:
+                    width = 24
+                ws.set_column(i, i, width)
+                if col in {"interaction_rate", "met_new_rate", "one_to_one_rate", "brought_someone_rate", "avg_interaction_rate", "avg_met_new_rate", "avg_one_to_one_rate", "avg_brought_someone_rate"}:
+                    ws.set_column(i, i, 14, pct_fmt)
+                if col in {"event_date", "latest_event_date"}:
+                    ws.set_column(i, i, 14, date_fmt)
 
     event_level.to_csv(OUT_CSV, index=False)
 
