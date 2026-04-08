@@ -9,7 +9,7 @@ from pathlib import Path
 # - No Host Pack stamping. Host Packs always build full history.
 #
 # Outputs are written under:
-#   C:\BusinessBuzz_Region\Buzz_Region_Curated\
+#   C:\Users\EmmaSmith\OneDrive - The Horsey HR Lady\Documents\Business Buzz\BusinessBuzz_Region\Buzz_Region_Curated\
 # ==========================================================
 
 BASE = Path(__file__).resolve().parent
