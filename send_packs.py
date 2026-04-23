@@ -364,7 +364,7 @@ def main() -> None:
         # 5. Build web link
         web_link = None
         if pages_base:
-            web_link = f"{pages_base}/host_packs/{html_filename}"
+            web_link = f"{pages_base}/{html_filename}"
 
         # 6. Send
         subject = f"Your {town_label} host pack \u2014 {MONTH_LABEL}"
