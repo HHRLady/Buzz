@@ -1,16 +1,21 @@
 # .github/workflows/build-host-packs.yml
 #
-# Business Buzz – Host Pack Build & Send
-# =======================================
-# Triggered manually from the GitHub Actions tab in your browser.
-# Runs the Python pipeline, publishes HTML to GitHub Pages,
-# then emails each host their personalised pack.
-#
-# To trigger: Actions tab → "Build and Send Host Packs" → Run workflow
+# Business Buzz – Host Pack Deploy & Send
+# ========================================
+# Triggered automatically when you push HTML host packs to the repo,
+# or manually from the GitHub Actions tab.
+# Publishes HTML to GitHub Pages, then emails each host their personalised pack.
 
 name: Build and Send Host Packs
 
 on:
+  # Auto-trigger when you push your locally-built host pack HTML files
+  push:
+    branches:
+      - main
+    paths:
+      - 'Buzz_Region_Curated/host_packs/*.html'
+
   # Manual trigger — click the button in GitHub's Actions tab
   workflow_dispatch:
     inputs:
@@ -19,20 +24,16 @@ on:
         required: false
         default: ''
       dry_run:
-        description: 'Dry run — generate packs but do not send emails'
+        description: 'Dry run — deploy to Pages but do not send emails'
         type: boolean
         required: false
         default: false
-
-  # Optional: uncomment to run automatically on the 1st of each month at 08:00 UTC
-  # schedule:
-  #   - cron: '0 8 1 * *'
 
 jobs:
   build-and-send:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pages: write
       id-token: write
 
@@ -51,34 +52,14 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. INSTALL CHROMIUM (for PDF conversion) ──────────────────────
+      # ── 4. INSTALL CHROMIUM (for PDF conversion in send_packs.py) ────
       - name: Install Chromium
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y chromium-browser
 
-      # ── 5. RUN THE REGIONAL BUILD ────────────────────────────────────
-      # This generates all HTML host packs into Buzz_Region_Curated/host_packs/
-      - name: Run regional build pipeline
-        run: |
-          EVENT_DATE="${{ github.event.inputs.event_date }}"
-          if [ -n "$EVENT_DATE" ]; then
-            python Buzz_Town_HostPack_v2.py --town ALL --event-date "$EVENT_DATE"
-          else
-            python Buzz_Town_HostPack_v2.py --town ALL
-          fi
-
-      # ── 6. COMMIT OUTPUTS BACK TO REPO ───────────────────────────────
-      # This makes the HTML files available for GitHub Pages
-      - name: Commit generated packs
-        run: |
-          git config user.name  "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add Buzz_Region_Curated/host_packs/*.html
-          git diff --staged --quiet || git commit -m "Auto: host packs ${{ github.run_number }} $(date +%Y-%m)"
-          git push
-
-      # ── 7. DEPLOY TO GITHUB PAGES ─────────────────────────────────────
+      # ── 5. DEPLOY TO GITHUB PAGES ────────────────────────────────────
+      # Uses the HTML files you pushed — no rebuild needed
       - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v3
         with:
@@ -88,7 +69,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # ── 8. SEND EMAILS ───────────────────────────────────────────────
+      # ── 6. SEND EMAILS ───────────────────────────────────────────────
       - name: Send host pack emails
         env:
           SENDGRID_API_KEY:                ${{ secrets.SENDGRID_API_KEY }}
@@ -107,10 +88,10 @@ jobs:
           fi
           python send_packs.py --town ALL $DRY_RUN
 
-      # ── 9. SUMMARY ───────────────────────────────────────────────────
+      # ── 7. SUMMARY ───────────────────────────────────────────────────
       - name: Print summary
         run: |
-          echo "## Host Packs Built and Sent" >> $GITHUB_STEP_SUMMARY
+          echo "## Host Packs Deployed and Sent" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Month: $(date +'%B %Y')" >> $GITHUB_STEP_SUMMARY
           echo "- Event date: ${{ github.event.inputs.event_date || 'not specified' }}" >> $GITHUB_STEP_SUMMARY
