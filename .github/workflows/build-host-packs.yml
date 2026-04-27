@@ -15,6 +15,7 @@ on:
       - main
     paths:
       - 'Buzz_Region_Curated/host_packs/*.html'
+      - '!Buzz_Region_Curated/host_packs/buzz-tracker.html'
 
   # Manual trigger — click the button in GitHub's Actions tab
   workflow_dispatch:
