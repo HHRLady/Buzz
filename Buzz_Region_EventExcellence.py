@@ -304,8 +304,10 @@ def compute_award_rating(
       - All awards (3/4/5-star) require avg_best10 >= 25.
       - 3-Star: attendance only.
       - 4-Star: attendance + 2 ambassadors.
-      - 5-Star: attendance + 2 ambassadors + 2+ Buzz Plussers + 2+ sponsors.
-      - Special prize: as 5-Star plus 4+ sponsors and 5+ Buzz Plussers.
+      - 5-Star: attendance + 2 ambassadors + combined total of
+                Buzz Plus members + sponsors >= 4 (any mix).
+                e.g. 4 sponsors, 3+1, 2+2, 1+3, 0+4 all qualify.
+      - Special prize: as 5-Star plus sponsors >= 4 AND Buzz Plus >= 5.
     """
 
     # Default
@@ -317,8 +319,8 @@ def compute_award_rating(
         return stars, rating, special
 
     # Attendance criterion met – at least 3 stars
-    # 5-Star logic
-    if ambassadors >= 2 and plus_members >= 2 and sponsors >= 2:
+    # 5-Star logic: combined Buzz Plus + sponsors >= 4
+    if ambassadors >= 2 and (plus_members + sponsors) >= 4:
         stars = 5
         rating = "5-Star Award"
         if sponsors >= 4 and plus_members >= 5:

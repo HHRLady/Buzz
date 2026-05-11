@@ -256,6 +256,129 @@ def build_region_master_people():
     ]
 
     grouped = grouped[cols_order]
+
+    # ── Overlay roles from reference CSVs ────────────────────────────────────
+    # The app attendance export is unreliable for role assignments:
+    #   • Recently-added team members often have no role recorded in past exports.
+    #   • People who have left may still show their old role from historic exports.
+    #
+    # The roles_*.csv files are the authoritative source.  We apply them as follows:
+    #   1. Email appears in a ref file with a currently-active role → set that role.
+    #   2. Email appears in a ref file but all their roles have ended → clear role_region.
+    #   3. Email not in any ref file → leave role_region as-is (regular attendee).
+    #
+    # "Currently active" means:
+    #   start_date is blank OR ≤ today,  AND  end_date is blank OR ≥ today.
+
+    today = pd.Timestamp.today().normalize()
+
+    ref_role_priority = {
+        "regional lead": 3,
+        "host": 2,
+        "ambassador": 1,
+    }
+
+    def _read_csv_safe_rollup(path: Path) -> pd.DataFrame:
+        try:
+            return pd.read_csv(path, encoding="utf-8-sig")
+        except (UnicodeDecodeError, Exception):
+            return pd.read_csv(path, encoding="latin-1")
+
+    # ref_roles:  email_lower → (priority, role_string)  — currently active roles only
+    # ref_known:  set of email_lower — everyone who appears in ANY ref file
+    ref_roles: dict = {}
+    ref_known: set  = set()
+
+    for town in TOWNS:
+        csv_path = BASE / town["folder"] / "data_ref" / f"roles_{town['code']}.csv"
+        if not csv_path.exists():
+            continue
+        try:
+            rdf = _read_csv_safe_rollup(csv_path)
+        except Exception as exc:
+            print(f"[WARN] Rollup role overlay: could not read {csv_path}: {exc}")
+            continue
+
+        rdf.columns = [str(c).strip() for c in rdf.columns]
+
+        email_col = next((c for c in rdf.columns if "email" in c.lower()), None)
+        role_col  = next((c for c in rdf.columns if c.lower() == "role"), None)
+        start_col = next((c for c in rdf.columns if "start" in c.lower()), None)
+        end_col   = next((c for c in rdf.columns if "end" in c.lower()), None)
+
+        if not email_col or not role_col:
+            continue
+
+        for _, row in rdf.iterrows():
+            email_raw = str(row[email_col]).strip()
+            if not email_raw or email_raw.lower() == "nan":
+                continue
+
+            role_raw = str(row[role_col]).strip()
+            role_lower = role_raw.lower()
+            priority = ref_role_priority.get(role_lower, 0)
+            if priority == 0:
+                continue  # skip member / unknown roles — not tracked in role_region
+
+            email_key = email_raw.lower()
+            ref_known.add(email_key)
+
+            # Check start_date: must be blank or ≤ today
+            started = True
+            if start_col:
+                start_val = row.get(start_col)
+                if pd.notna(start_val) and str(start_val).strip():
+                    try:
+                        start_dt = pd.to_datetime(start_val, dayfirst=True, errors="coerce")
+                        if pd.notna(start_dt) and start_dt.normalize() > today:
+                            started = False
+                    except Exception:
+                        pass
+
+            # Check end_date: must be blank or ≥ today
+            still_active = True
+            if end_col:
+                end_val = row.get(end_col)
+                if pd.notna(end_val) and str(end_val).strip():
+                    try:
+                        end_dt = pd.to_datetime(end_val, dayfirst=True, errors="coerce")
+                        if pd.notna(end_dt) and end_dt.normalize() < today:
+                            still_active = False
+                    except Exception:
+                        pass
+
+            if not started or not still_active:
+                continue  # role not currently active — do not add to ref_roles
+
+            existing = ref_roles.get(email_key)
+            if existing is None or priority > existing[0]:
+                ref_roles[email_key] = (priority, role_raw)
+
+    # Apply overlay to role_region
+    def _apply_ref_role(row):
+        email_key = str(row["email"]).strip().lower()
+
+        if email_key not in ref_known:
+            # Not in any reference file — trust attendance data as-is
+            return row["role_region"]
+
+        active_ref = ref_roles.get(email_key)
+        if active_ref is None:
+            # In ref files but no currently-active role → they've left; clear badge
+            return ""
+
+        # Has an active reference role → use it (reference is authoritative)
+        return active_ref[1]
+
+    grouped["role_region"] = grouped.apply(_apply_ref_role, axis=1)
+    n_active = len(ref_roles)
+    n_cleared = sum(
+        1 for _, r in grouped.iterrows()
+        if str(r["email"]).strip().lower() in ref_known
+        and str(r["email"]).strip().lower() not in ref_roles
+    )
+    print(f"[INFO] Role overlay: {n_active} active ref-role entries applied, {n_cleared} lapsed roles cleared.")
+
     return grouped
 
 

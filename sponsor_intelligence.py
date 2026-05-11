@@ -25,23 +25,76 @@ REGION_CURATED.mkdir(exist_ok=True)
 # ==========================================================
 
 def categorise_company(name: str) -> str:
-    """Very lightweight classifier that you can extend later."""
+    """
+    Industry classifier used for sponsor lock-out mapping.
+
+    Categories (checked in priority order — first match wins):
+      Accountancy | Legal | Insurance | Mortgage & Lending |
+      Financial Services | HR & Recruitment | IT & Technology |
+      Marketing, Design & PR | Property & Construction |
+      Health & Wellbeing | Print, Signs & Promotional |
+      Photography & Media | Business Coaching & Consulting |
+      General Business
+
+    To add or adjust a category, extend the relevant keyword list below.
+    Order matters — more specific categories appear before broader ones
+    (e.g. Insurance before Financial Services).
+    """
     if not isinstance(name, str):
         return "Unknown"
     n = name.lower()
 
-    if "account" in n:
+    # Accountancy
+    if any(k in n for k in ("account", "bookkeep", "chartered", "tax advisor", "tax adviser", "payroll")):
         return "Accountancy"
-    if "solicitor" in n or "legal" in n or "law" in n:
+
+    # Legal
+    if any(k in n for k in ("solicitor", "legal", "law firm", "barrister", "conveyancing", "notary")):
         return "Legal"
-    if "coach" in n or "consult" in n:
-        return "Coaching/Consulting"
-    if "marketing" in n or "brand" in n:
-        return "Marketing"
-    if "it " in n or "tech" in n:
-        return "IT/Technology"
-    if "finance" in n:
+
+    # Insurance (before Financial Services — more specific)
+    if any(k in n for k in ("insur", "underwriter", "protection specialist")):
+        return "Insurance"
+
+    # Mortgage & Lending (before Financial Services)
+    if any(k in n for k in ("mortgage", "lending", "bridging", "remortgage")):
+        return "Mortgage & Lending"
+
+    # Financial Services / IFA / Wealth
+    if any(k in n for k in ("financ", "ifa", "wealth", "investment", "pension", "asset manag", "financial plann")):
         return "Financial Services"
+
+    # HR & Recruitment
+    if any(k in n for k in ("recruit", "staffing", "talent", "human resource", " hr ", "hr consult", "people consult", "employment")):
+        return "HR & Recruitment"
+
+    # IT & Technology
+    if any(k in n for k in ("software", "cyber", "digital", "cloud", " it ", "i.t.", "technology", "tech ", "systems", "web design", "app dev", "data consult", "managed service")):
+        return "IT & Technology"
+
+    # Marketing, Design & PR
+    if any(k in n for k in ("marketing", "brand", " pr ", "public relation", "design", "creative", "agency", "advertising", "social media", "copywriter", "content")):
+        return "Marketing, Design & PR"
+
+    # Property & Construction
+    if any(k in n for k in ("property", "estate agent", "surveyor", "architect", "construction", "building", "developer", "plumber", "electrician", "roofing", "flooring", "landscap")):
+        return "Property & Construction"
+
+    # Health & Wellbeing
+    if any(k in n for k in ("health", "wellbeing", "wellness", "therapy", "therapist", "physiother", "dental", "dentist", "nutrition", "fitness", "gym", "osteo", "chiropract", "counsell", "mental health")):
+        return "Health & Wellbeing"
+
+    # Print, Signs & Promotional
+    if any(k in n for k in ("print", "signage", "signs", "promotional", "merchandise", "embroid", "workwear", "banner")):
+        return "Print, Signs & Promotional"
+
+    # Photography & Media
+    if any(k in n for k in ("photo", "videograph", "filmmaker", "media", " film ", "podcast", "broadcast")):
+        return "Photography & Media"
+
+    # Business Coaching & Consulting (broad — after sector-specific above)
+    if any(k in n for k in ("coach", "consult", "mentor", "training", "business advisor", "business adviser", "facilitator")):
+        return "Business Coaching & Consulting"
 
     return "General Business"
 

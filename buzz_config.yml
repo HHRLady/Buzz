@@ -1,0 +1,87 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Business Buzz Reporting — Shared Configuration
+# Leicestershire & Rutland Region
+#
+# This file is the single source of truth for all thresholds and constants
+# used across the reporting scripts. Change a value here and it applies
+# everywhere — no need to hunt through individual scripts.
+#
+# NOTE: Scripts must be updated to read from this file before changes here
+#       take effect. See Buzz_ScriptLogic_Reference for migration notes.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── Attendance categorisation ──────────────────────────────────────────────────
+attendance:
+  regular_min_visits: 3       # visits in rolling 12 months to qualify as a regular
+  regular_months: 12          # the rolling window (months) used for regular classification
+  lapsed_months: 3            # months since last attendance before shown as lapsed
+  lapsed_max_months: 6        # after this many months absent, member drops off the list entirely
+  return_window_months: 3     # window in which a first-timer counts as "returned"
+  active_member_months: 6     # visit count used as "active" proxy in regional reports
+
+
+# ── Event Excellence ──────────────────────────────────────────────────────────
+#
+# Scoring:
+#   —       avg paying guests < paying_guest_target
+#   3★      avg paying guests >= paying_guest_target (best 10 months Nov–Oct)
+#   4★      3★ + trained ambassadors >= ambassador_min
+#   5★      4★ + (Buzz Plus members + sponsors) >= combined_min  [any combination]
+#   ✨ Special  5★ + sponsors >= sponsor_full AND Buzz Plus >= plus_full
+#
+event_excellence:
+  paying_guest_target: 25     # minimum avg paying guests for 3★ and above
+  ambassador_min: 2           # trained ambassadors active 3+ months required for 4★
+  combined_min: 4             # combined total of Buzz Plus members + sponsors for 5★
+                              # (e.g. 4 sponsors + 0 plus, 3 sponsors + 1 plus, 2+2, etc.)
+  plus_full: 5                # Buzz Plus members required for special prize
+  sponsor_full: 4             # sponsors required for special prize
+
+
+# ── Buzz Plus prospecting ─────────────────────────────────────────────────────
+#
+# Note: the intelligence engine and host pack use slightly different thresholds.
+# The host pack casts a wider net for the host's direct conversations.
+#
+buzz_plus:
+  strong_min_visits: 6        # visits in last 12 months → "Strong" prospect
+  possible_min_visits: 4      # visits in last 12 months → "Possible" (intelligence engine)
+  possible_host_pack_min: 3   # visits threshold for "Possible" in host pack (wider net)
+
+
+# ── Sponsor compliance ────────────────────────────────────────────────────────
+sponsor:
+  expected_events: 12         # expected events per rolling year (monthly events = 12)
+  excellent_threshold: 1.00   # 100% attendance = Excellent
+  good_threshold: 0.85        # 85%+ = Good
+  needs_attention_threshold: 0.60  # 60–84% = Needs Attention; below 60% = At Risk
+  slots_per_town: 4           # maximum sponsor slots per town
+
+
+# ── RAG status (town health) ──────────────────────────────────────────────────
+rag:
+  green_min_attendance: 25    # latest event count must be >= this for Green
+  red_max_attendance: 18      # latest event count below this = Red regardless of trend
+
+
+# ── Cross-town and candidate thresholds ───────────────────────────────────────
+cross_town:
+  min_distinct_towns: 2       # minimum towns attended to appear in cross-town table
+  host_candidate_min_visits: 6  # regional visits needed to appear as host/ambassador candidate
+
+
+# ── 3-2-1 tracker ─────────────────────────────────────────────────────────────
+tracker_321:
+  status_required: submitted  # only rows with this status are processed
+  strong_coverage: 0.40       # interaction rate >= 40% = Strong coverage
+  moderate_coverage: 0.20     # interaction rate >= 20% = Moderate; below = Low
+  # no_show field: pending confirmation of tracker update before enabling
+
+
+# ── AllBuild pipeline ─────────────────────────────────────────────────────────
+allbuild:
+  stop_on_failure: true         # pipeline halts immediately if any script fails
+                                # set false only if you want it to carry on regardless
+  town_target_month: ""         # set to YYYY-MM to rebuild only that month per town
+                                # leave blank for a full history run

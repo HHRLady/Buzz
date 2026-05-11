@@ -2,23 +2,48 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 # ==========================================================
-# Business Buzz – Region All Build (UPDATED – Option A + 3-2-1)
+# Business Buzz – Region All Build (UPDATED – Option A)
 #
 # Option A rules
 # - No Host Pack stamping. Host Packs always build full history.
 #
 # Outputs are written under:
 #   C:\Users\EmmaSmith\OneDrive - The Horsey HR Lady\Documents\Business Buzz\BusinessBuzz_Region\Buzz_Region_Curated\
+#
+# Pipeline behaviour is controlled by buzz_config.yml:
+#   allbuild.stop_on_failure   — halt immediately if any step fails (default: true)
+#   allbuild.town_target_month — set to YYYY-MM to rebuild only that month per town
 # ==========================================================
 
 BASE = Path(__file__).resolve().parent
 REGION_CURATED = BASE / "Buzz_Region_Curated"
 
-# Town build month:
-# - Set to "YYYY-MM" to rebuild just that month per town (fast).
-# - Leave blank to run town scripts with no --month argument.
-TOWN_TARGET_MONTH = ""  # e.g. "2026-01" or ""
+# ── Load config ────────────────────────────────────────────────────────────────
+_cfg_path = BASE / "buzz_config.yml"
+_allbuild_cfg: dict = {}
+if yaml and _cfg_path.exists():
+    try:
+        with open(_cfg_path, encoding="utf-8") as _f:
+            _full_cfg = yaml.safe_load(_f) or {}
+        _allbuild_cfg = _full_cfg.get("allbuild", {})
+    except Exception as _exc:
+        print(f"[WARN] Could not read buzz_config.yml: {_exc}. Using defaults.")
+elif not yaml:
+    print("[WARN] PyYAML not installed — buzz_config.yml not read. Using defaults.")
+    print("[WARN] Install with: pip install pyyaml --break-system-packages")
+
+# Town build month from config
+TOWN_TARGET_MONTH: str = _allbuild_cfg.get("town_target_month", "") or ""
+
+# Stop immediately if any step fails
+STOP_ON_FAILURE: bool = bool(_allbuild_cfg.get("stop_on_failure", True))
+
 
 TOWN_BUILDS = {
     "MarketHarborough": ("Buzz_Event_Dashboard_MarketHarborough", "buzz_mh_build.py"),
@@ -29,17 +54,18 @@ TOWN_BUILDS = {
 }
 
 REGION_SCRIPTS = [
-    ("Region rollup",              "Buzz_Region_Rollup.py",           []),
-    ("Event Excellence",           "Buzz_Region_EventExcellence.py",  []),
-    ("Sponsor intelligence",       "sponsor_intelligence.py",         []),
-    ("Buzz Plus intelligence",     "buzzplus_intelligence.py",        []),
-    ("Buzz 3-2-1 intelligence",    "buzz_321_intelligence.py",        []),
-    ("Regional dashboard",         "Buzz_Region_Dashboard.py",        []),
+    ("Sync ambassadors",       "Buzz_Region_SyncAmbassadors.py",  []),  # must run first — rebuilds buzz_ambassadors.xlsx from town roles CSVs
+    ("Region rollup",          "Buzz_Region_Rollup.py",           []),
+    ("Event Excellence",       "Buzz_Region_EventExcellence.py",  []),
+    ("Sponsor intelligence",   "sponsor_intelligence.py",         []),
+    ("Buzz Plus intelligence", "buzzplus_intelligence.py",        []),
+    ("3-2-1 intelligence",     "buzz_321_intelligence.py",        []),  # must run before host packs
+    ("Regional dashboard",     "Buzz_Region_Dashboard.py",        []),
+    ("RL Monthly Combined",    "Buzz_Region_Monthly_Combined.py", []),  # merged pack — must run after Dashboard + 321
+    ("RL Quarterly Dashboard",  "Buzz_Region_QuarterlyDashboard.py", []),  # current quarter, in-progress aware
 
     # Host Packs: FULL HISTORY, no stamping
-    ("Town host packs",            "Buzz_Town_HostPack.py",           ["--town", "ALL"]),
-
-    ("RL Monthly Pack",            "Buzz_RL_MonthlyPack.py",          []),
+    ("Town host packs",        "Buzz_Town_HostPack.py",           ["--town", "ALL"]),
 ]
 
 
@@ -65,10 +91,13 @@ def main() -> None:
     print("=" * 43)
     print("   Business Buzz – Region All Build")
     print("=" * 43)
-    print(f"Base folder: {BASE}")
-    print(f"Town target month: {TOWN_TARGET_MONTH or '(none)'}")
+    print(f"Base folder:        {BASE}")
+    print(f"Town target month:  {TOWN_TARGET_MONTH or '(none — full run)'}")
+    print(f"Stop on failure:    {STOP_ON_FAILURE}")
 
     REGION_CURATED.mkdir(parents=True, exist_ok=True)
+
+    failed_steps: list[str] = []
 
     # 1) Town builds
     print("\n---------- TOWN BUILDS ----------")
@@ -91,7 +120,14 @@ def main() -> None:
         if TOWN_TARGET_MONTH:
             cmd += ["--month", TOWN_TARGET_MONTH]
 
-        _run_step(label=label, cmd=cmd, cwd=town_folder)
+        ok = _run_step(label=label, cmd=cmd, cwd=town_folder)
+        if not ok:
+            failed_steps.append(label)
+            if STOP_ON_FAILURE:
+                print(f"\n[HALT] stop_on_failure=true — aborting after failed step: {label}")
+                print(f"[HALT] Fix the error above and re-run AllBuild.")
+                _print_summary(failed_steps, aborted=True)
+                sys.exit(1)
 
     # 2) Regional scripts
     print("\n---------- REGIONAL SCRIPTS ----------")
@@ -103,11 +139,31 @@ def main() -> None:
             continue
 
         cmd = [sys.executable, script_name] + (extra_args or [])
-        _run_step(label=label, cmd=cmd, cwd=BASE)
+        ok = _run_step(label=label, cmd=cmd, cwd=BASE)
+        if not ok:
+            failed_steps.append(label)
+            if STOP_ON_FAILURE:
+                print(f"\n[HALT] stop_on_failure=true — aborting after failed step: {label}")
+                print(f"[HALT] Fix the error above and re-run AllBuild.")
+                _print_summary(failed_steps, aborted=True)
+                sys.exit(1)
 
+    _print_summary(failed_steps, aborted=False)
+
+
+def _print_summary(failed_steps: list[str], aborted: bool) -> None:
     print("\n" + "=" * 43)
-    print("   AllBuild sequence complete.")
+    if aborted:
+        print("   AllBuild ABORTED.")
+    elif failed_steps:
+        print("   AllBuild complete — WITH ERRORS.")
+    else:
+        print("   AllBuild sequence complete.")
     print(f"   Check {REGION_CURATED} for outputs.")
+    if failed_steps:
+        print(f"\n   Failed steps ({len(failed_steps)}):")
+        for s in failed_steps:
+            print(f"     ✗  {s}")
     print("=" * 43)
 
 
