@@ -62,7 +62,7 @@ jobs:
       # ── 5. DEPLOY TO GITHUB PAGES ────────────────────────────────────
       # Uses the HTML files you pushed — no rebuild needed
       - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: Buzz_Region_Curated/host_packs
 
