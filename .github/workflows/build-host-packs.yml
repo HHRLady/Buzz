@@ -1,31 +1,33 @@
 # .github/workflows/build-host-packs.yml
 #
-# Business Buzz – Host Pack Deploy & Send
+# Business Buzz - Reports Deploy & Send
 # ========================================
-# Triggered automatically when you push HTML host packs to the repo,
+# Triggered automatically when you push HTML reports to the repo,
 # or manually from the GitHub Actions tab.
-# Publishes HTML to GitHub Pages, then emails each host their personalised pack.
+# Publishes all HTML reports to GitHub Pages, then emails each host their
+# personalised pack and emails the RL the monthly combined report.
 
-name: Build and Send Host Packs
+name: Deploy and Send Reports
 
 on:
-  # Auto-trigger when you push your locally-built host pack HTML files
+  # Auto-trigger when you push host packs or the RL monthly report
   push:
     branches:
       - main
     paths:
       - 'Buzz_Region_Curated/host_packs/*.html'
       - '!Buzz_Region_Curated/host_packs/buzz-tracker.html'
+      - 'Buzz_Region_Curated/Region_Monthly_Combined.html'
 
-  # Manual trigger — click the button in GitHub's Actions tab
+  # Manual trigger - click the button in GitHub's Actions tab
   workflow_dispatch:
     inputs:
       event_date:
-        description: 'Next event date (e.g. Thursday 17 April 2026) — optional'
+        description: 'Next event date (e.g. Thursday 17 April 2026) - optional'
         required: false
         default: ''
       dry_run:
-        description: 'Dry run — deploy to Pages but do not send emails'
+        description: 'Dry run - deploy to Pages but do not send emails'
         type: boolean
         required: false
         default: false
@@ -39,38 +41,40 @@ jobs:
       id-token: write
 
     steps:
-      # ── 1. CHECK OUT THE REPO ────────────────────────────────────────
+      # -- 1. CHECK OUT THE REPO -------------------------------------------
       - name: Check out repository
         uses: actions/checkout@v4
 
-      # ── 2. SET UP PYTHON ─────────────────────────────────────────────
+      # -- 2. SET UP PYTHON -------------------------------------------------
       - name: Set up Python 3.12
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      # ── 3. INSTALL DEPENDENCIES ──────────────────────────────────────
+      # -- 3. INSTALL DEPENDENCIES ------------------------------------------
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. INSTALL CHROMIUM (for PDF conversion in send_packs.py) ────
+      # -- 4. INSTALL CHROMIUM (for PDF conversion in send_packs.py) --------
       - name: Install Chromium
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y chromium-browser
 
-      # ── 5. DEPLOY TO GITHUB PAGES ────────────────────────────────────
-      # Uses the HTML files you pushed — no rebuild needed
+      # -- 5. DEPLOY TO GITHUB PAGES ----------------------------------------
+      # Serves the whole Buzz_Region_Curated folder:
+      #   host packs  ->  /host_packs/HostPack_<Town>.html
+      #   RL report   ->  /Region_Monthly_Combined.html
       - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v5
         with:
-          path: Buzz_Region_Curated/host_packs
+          path: Buzz_Region_Curated
 
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
 
-      # ── 6. SEND EMAILS ───────────────────────────────────────────────
+      # -- 6. SEND HOST PACK EMAILS -----------------------------------------
       - name: Send host pack emails
         env:
           SMTP_HOST:                       smtp.zoho.eu
@@ -92,12 +96,31 @@ jobs:
           fi
           python send_packs.py --town ALL $DRY_RUN
 
-      # ── 7. SUMMARY ───────────────────────────────────────────────────
+      # -- 7. SEND RL MONTHLY REPORT EMAIL ----------------------------------
+      - name: Send RL monthly report email
+        env:
+          SMTP_HOST:      smtp.zoho.eu
+          SMTP_PORT:      "587"
+          SMTP_USER:      ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:  ${{ secrets.SMTP_PASSWORD }}
+          SENDER_EMAIL:   ${{ secrets.SENDER_EMAIL }}
+          SENDER_NAME:    ${{ secrets.SENDER_NAME }}
+          PAGES_BASE_URL: ${{ secrets.PAGES_BASE_URL }}
+          RL_EMAIL:       ${{ secrets.RL_EMAIL }}
+        run: |
+          DRY_RUN=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN="--dry-run"
+          fi
+          python send_packs.py --rl-report $DRY_RUN
+
+      # -- 8. SUMMARY -------------------------------------------------------
       - name: Print summary
         run: |
-          echo "## Host Packs Deployed and Sent" >> $GITHUB_STEP_SUMMARY
+          echo "## Reports Deployed and Sent" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- Month: $(date +'%B %Y')" >> $GITHUB_STEP_SUMMARY
           echo "- Event date: ${{ github.event.inputs.event_date || 'not specified' }}" >> $GITHUB_STEP_SUMMARY
           echo "- Dry run: ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Towns: Market Harborough, Leicester, Lutterworth, Hinckley, Loughborough" >> $GITHUB_STEP_SUMMARY
+          echo "- Host packs sent: Market Harborough, Leicester, Lutterworth, Hinckley, Loughborough" >> $GITHUB_STEP_SUMMARY
+          echo "- RL report sent to: RL_EMAIL secret" >> $GITHUB_STEP_SUMMARY

@@ -1,8 +1,17 @@
 """
 send_packs.py
 =============
-Converts each HTML host pack to PDF (using headless Chrome) and emails
-it to the relevant host via Zoho SMTP.
+Converts HTML reports to PDF (using headless Chrome) and emails them
+via Zoho SMTP.  Supports two modes:
+
+  Host pack mode (default):
+    Sends each town's host pack to its host.
+    python send_packs.py --town ALL
+    python send_packs.py --town Leicester
+
+  RL report mode:
+    Sends the monthly RL combined report to the Regional Lead.
+    python send_packs.py --rl-report
 
 Run by GitHub Actions after the build step. Not intended for local use.
 
@@ -11,25 +20,34 @@ Environment variables required (set as GitHub Secrets):
     SMTP_PASSWORD             Zoho App Password
     SENDER_EMAIL              From address (usually same as SMTP_USER)
     SENDER_NAME               Display name, e.g. Emma - Business Buzz L&R
+    PAGES_BASE_URL            GitHub Pages root URL, e.g.
+                              https://hhrlady.github.io/Buzz
+
+  Host pack mode only:
     HOST_EMAIL_MARKETHARBOROUGH
     HOST_EMAIL_LEICESTER
     HOST_EMAIL_LUTTERWORTH
     HOST_EMAIL_HINCKLEY
     HOST_EMAIL_LOUGHBOROUGH
-    PAGES_BASE_URL            GitHub Pages base URL, e.g.
-                              https://hhrlady.github.io/Buzz
+
+  RL report mode only:
+    RL_EMAIL                  Regional Lead email address
 
 Optional (defaults shown):
     SMTP_HOST                 smtp.zoho.eu
     SMTP_PORT                 587
 
 Usage:
-    python send_packs.py
-    python send_packs.py --dry-run   (prints what would be sent, no emails)
+    python send_packs.py                        (all host packs)
+    python send_packs.py --town Leicester       (single town)
+    python send_packs.py --rl-report            (RL monthly report)
+    python send_packs.py --dry-run              (no emails sent)
+    python send_packs.py --rl-report --dry-run
 """
 
 import argparse
 import os
+import re
 import smtplib
 import subprocess
 import sys
@@ -47,6 +65,7 @@ from pathlib import Path
 SCRIPT_DIR     = Path(__file__).resolve().parent
 REGION_CURATED = SCRIPT_DIR / "Buzz_Region_Curated"
 PACKS_DIR      = REGION_CURATED / "host_packs"
+RL_REPORT_FILE = "Region_Monthly_Combined.html"
 
 MONTH_LABEL = date.today().strftime("%B %Y")
 
@@ -172,7 +191,7 @@ def send_email(
 
 
 # ------------------------------------------------------------------
-# EMAIL CONTENT BUILDERS
+# HOST PACK EMAIL CONTENT
 # ------------------------------------------------------------------
 
 def _text_body(host_name: str, town_label: str, web_link: str | None) -> str:
@@ -295,16 +314,119 @@ def _html_body(host_name: str, town_label: str, web_link: str | None) -> str:
 
 
 # ------------------------------------------------------------------
+# RL REPORT EMAIL CONTENT
+# ------------------------------------------------------------------
+
+def _rl_text_body(web_link: str | None) -> str:
+    lines = [
+        "Hi Emma,",
+        "",
+        f"Your Leicestershire & Rutland RL monthly report for {MONTH_LABEL} is attached.",
+        "It covers attendance, cross-town visits, Buzz Plus, 321 activity, and regional trends.",
+        "",
+    ]
+    if web_link:
+        lines += [
+            "View it online:",
+            f"  {web_link}",
+            "",
+        ]
+    lines += [
+        "Business Buzz Leicestershire & Rutland",
+    ]
+    return "\n".join(lines)
+
+
+def _rl_html_body(web_link: str | None) -> str:
+    teal   = "#00A19A"
+    orange = "#F39200"
+    dark   = "#111827"
+    muted  = "#6B7280"
+    light  = "#F9FAFB"
+
+    link_section = ""
+    if web_link:
+        link_section = f"""
+        <tr><td style="padding:16px 32px;background:{light};border-radius:8px;margin:0 32px">
+          <p style="margin:0 0 8px;font-size:13px;color:{muted};font-family:Gill Sans,Calibri,sans-serif">
+            View online:
+          </p>
+          <a href="{web_link}" style="color:{teal};font-size:13px;font-family:Gill Sans,Calibri,sans-serif">{web_link}</a>
+        </td></tr>
+        <tr><td style="padding:8px 0"></td></tr>"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Century Gothic','Gill Sans',Calibri,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr><td align="center" style="padding:32px 16px">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px">
+
+  <!-- Header -->
+  <tr><td style="background:{teal};border-radius:12px 12px 0 0;padding:28px 32px 22px">
+    <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.6)">
+      Business Buzz &middot; Leicestershire &amp; Rutland
+    </p>
+    <p style="margin:0 0 4px;font-size:22px;font-weight:700;color:#fff">RL monthly report</p>
+    <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.7)">{MONTH_LABEL}</p>
+  </td></tr>
+
+  <!-- Colour bar -->
+  <tr>
+    <td style="padding:0">
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td style="background:{teal};height:4px"></td>
+        <td style="background:{orange};height:4px"></td>
+        <td style="background:#D60B52;height:4px"></td>
+        <td style="background:#B6BD00;height:4px"></td>
+      </tr></table>
+    </td>
+  </tr>
+
+  <!-- Body -->
+  <tr><td style="background:#ffffff;border:1px solid #E5E7EB;border-top:none;border-radius:0 0 12px 12px;padding:28px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0">
+
+      <tr><td style="padding:0 0 16px">
+        <p style="margin:0;font-size:15px;color:{dark}">Hi Emma,</p>
+      </td></tr>
+
+      <tr><td style="padding:0 0 16px">
+        <p style="margin:0;font-size:14px;color:{dark};line-height:1.6">
+          Your <strong>Leicestershire &amp; Rutland RL monthly report</strong> for
+          <strong>{MONTH_LABEL}</strong> is attached. It covers attendance,
+          cross-town visits, Buzz Plus activity, 321 data, and regional trends.
+        </p>
+      </td></tr>
+
+      {link_section}
+
+      <tr><td style="padding:24px 0 0;border-top:1px solid #E5E7EB;margin-top:24px">
+        <p style="margin:0 0 4px;font-size:12px;color:{muted}">Business Buzz Leicestershire &amp; Rutland</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
+
+# ------------------------------------------------------------------
 # MAIN
 # ------------------------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Send Business Buzz host packs via Zoho SMTP.")
-    ap.add_argument("--dry-run", action="store_true", help="Print what would be sent without sending")
-    ap.add_argument("--town", default="ALL", help="Town code or ALL")
+    ap = argparse.ArgumentParser(description="Send Business Buzz reports via Zoho SMTP.")
+    ap.add_argument("--dry-run",   action="store_true", help="Print what would be sent without sending")
+    ap.add_argument("--town",      default="ALL",       help="Town code or ALL (host pack mode)")
+    ap.add_argument("--rl-report", action="store_true", help="Send RL monthly report instead of host packs")
     args = ap.parse_args()
 
-    # Load credentials
+    # Load shared credentials
     try:
         smtp_host     = os.environ.get("SMTP_HOST", "smtp.zoho.eu").strip()
         smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
@@ -317,6 +439,57 @@ def main() -> None:
         print(f"[FAIL] {exc}")
         sys.exit(1)
 
+    # ── RL REPORT MODE ────────────────────────────────────────────────
+    if args.rl_report:
+        print("\n[RL REPORT]")
+
+        html_path = REGION_CURATED / RL_REPORT_FILE
+        if not html_path.exists():
+            print(f"  [SKIP] RL report not found: {html_path}")
+            sys.exit(0)
+
+        try:
+            to_email = _env("RL_EMAIL")
+        except EnvironmentError as exc:
+            print(f"  [FAIL] {exc}")
+            sys.exit(1)
+
+        # Convert to PDF
+        pdf_path = REGION_CURATED / RL_REPORT_FILE.replace(".html", ".pdf")
+        has_pdf  = html_to_pdf(html_path, pdf_path)
+        attachment_path = pdf_path if has_pdf else html_path
+        attachment_name = (RL_REPORT_FILE.replace(".html", ".pdf") if has_pdf
+                           else RL_REPORT_FILE)
+
+        # Build web link — RL report sits at root of Buzz_Region_Curated,
+        # so its URL is pages_base/Region_Monthly_Combined.html
+        web_link = f"{pages_base}/{RL_REPORT_FILE}" if pages_base else None
+
+        subject = f"L&R RL monthly report — {MONTH_LABEL}"
+        success = send_email(
+            smtp_host       = smtp_host,
+            smtp_port       = smtp_port,
+            smtp_user       = smtp_user,
+            smtp_password   = smtp_password,
+            from_email      = from_email,
+            from_name       = from_name,
+            to_email        = to_email,
+            subject         = subject,
+            html_body       = _rl_html_body(web_link),
+            text_body       = _rl_text_body(web_link),
+            attachment_path = attachment_path,
+            attachment_name = attachment_name,
+            dry_run         = args.dry_run,
+        )
+
+        if success:
+            print(f"  [OK] Sent to {to_email}")
+        else:
+            sys.exit(1)
+
+        return
+
+    # ── HOST PACK MODE ────────────────────────────────────────────────
     towns_to_send = {k: v for k, v in TOWNS.items()
                      if args.town.upper() == "ALL" or k == args.town}
 
@@ -349,7 +522,6 @@ def main() -> None:
         host_name = "Host"
         try:
             content = html_path.read_text(encoding="utf-8")
-            import re
             m = re.search(r"Hi\s+(\w+)\s+&#8212;", content)
             if m:
                 host_name = m.group(1)
@@ -363,30 +535,31 @@ def main() -> None:
         attachment_name = (html_filename.replace(".html", ".pdf") if has_pdf
                            else html_filename)
 
-        # 5. Build web link
+        # 5. Build web link — host packs are in the host_packs/ subfolder
+        #    of Buzz_Region_Curated, so their URL includes that path segment
         web_link = None
         if pages_base:
-            web_link = f"{pages_base}/{html_filename}"
+            web_link = f"{pages_base}/host_packs/{html_filename}"
 
         # 6. Send
-        subject = f"Your {town_label} host pack \u2014 {MONTH_LABEL}"
+        subject = f"Your {town_label} host pack — {MONTH_LABEL}"
         text_b  = _text_body(host_name, town_label, web_link)
         html_b  = _html_body(host_name, town_label, web_link)
 
         success = send_email(
-            smtp_host      = smtp_host,
-            smtp_port      = smtp_port,
-            smtp_user      = smtp_user,
-            smtp_password  = smtp_password,
-            from_email     = from_email,
-            from_name      = from_name,
-            to_email       = to_email,
-            subject        = subject,
-            html_body      = html_b,
-            text_body      = text_b,
-            attachment_path= attachment_path,
-            attachment_name= attachment_name,
-            dry_run        = args.dry_run,
+            smtp_host       = smtp_host,
+            smtp_port       = smtp_port,
+            smtp_user       = smtp_user,
+            smtp_password   = smtp_password,
+            from_email      = from_email,
+            from_name       = from_name,
+            to_email        = to_email,
+            subject         = subject,
+            html_body       = html_b,
+            text_body       = text_b,
+            attachment_path = attachment_path,
+            attachment_name = attachment_name,
+            dry_run         = args.dry_run,
         )
 
         if success:
