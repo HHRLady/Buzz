@@ -73,7 +73,10 @@ jobs:
       # ── 6. SEND EMAILS ───────────────────────────────────────────────
       - name: Send host pack emails
         env:
-          SENDGRID_API_KEY:                ${{ secrets.SENDGRID_API_KEY }}
+          SMTP_HOST:                       smtp.zoho.eu
+          SMTP_PORT:                       "587"
+          SMTP_USER:                       ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:                   ${{ secrets.SMTP_PASSWORD }}
           SENDER_EMAIL:                    ${{ secrets.SENDER_EMAIL }}
           SENDER_NAME:                     ${{ secrets.SENDER_NAME }}
           PAGES_BASE_URL:                  ${{ secrets.PAGES_BASE_URL }}

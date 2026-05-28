@@ -2,21 +2,26 @@
 send_packs.py
 =============
 Converts each HTML host pack to PDF (using headless Chrome) and emails
-it to the relevant host via SendGrid.
+it to the relevant host via Zoho SMTP.
 
 Run by GitHub Actions after the build step. Not intended for local use.
 
 Environment variables required (set as GitHub Secrets):
-    SENDGRID_API_KEY          Your SendGrid API key
-    SENDER_EMAIL              From address, e.g. emma@thehorseyhrlady.co.uk
-    SENDER_NAME               Display name, e.g. Emma Smith - Business Buzz
+    SMTP_USER                 Zoho login, e.g. leicestershire@business-buzz.org
+    SMTP_PASSWORD             Zoho App Password
+    SENDER_EMAIL              From address (usually same as SMTP_USER)
+    SENDER_NAME               Display name, e.g. Emma - Business Buzz L&R
     HOST_EMAIL_MARKETHARBOROUGH
     HOST_EMAIL_LEICESTER
     HOST_EMAIL_LUTTERWORTH
     HOST_EMAIL_HINCKLEY
     HOST_EMAIL_LOUGHBOROUGH
     PAGES_BASE_URL            GitHub Pages base URL, e.g.
-                              https://emmahorseyhr.github.io/buzz-leics-rutland
+                              https://hhrlady.github.io/Buzz
+
+Optional (defaults shown):
+    SMTP_HOST                 smtp.zoho.eu
+    SMTP_PORT                 587
 
 Usage:
     python send_packs.py
@@ -24,13 +29,14 @@ Usage:
 """
 
 import argparse
-import base64
-import json
 import os
+import smtplib
 import subprocess
 import sys
-import urllib.request
-import urllib.error
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from datetime import date
 from pathlib import Path
 
@@ -46,7 +52,7 @@ MONTH_LABEL = date.today().strftime("%B %Y")
 
 # Map town code -> (display name, env var for host email, HTML filename)
 TOWNS = {
-    "MarketHarborough": ("Market Harborough", "HOST_EMAIL_MARKETHARBOROUGH", "HostPack_Market_Harborough.html"),
+    "MarketHarborough": ("Market Harborough", "HOST_EMAIL_MARKETHARBOROUGH", "HostPack_MarketHarborough.html"),
     "Leicester":        ("Leicester",          "HOST_EMAIL_LEICESTER",        "HostPack_Leicester.html"),
     "Lutterworth":      ("Lutterworth",        "HOST_EMAIL_LUTTERWORTH",      "HostPack_Lutterworth.html"),
     "Hinckley":         ("Hinckley",           "HOST_EMAIL_HINCKLEY",         "HostPack_Hinckley.html"),
@@ -98,7 +104,7 @@ def html_to_pdf(html_path: Path, pdf_path: Path) -> bool:
 
 
 # ------------------------------------------------------------------
-# EMAIL (SendGrid REST API — no SDK needed)
+# EMAIL (Zoho SMTP)
 # ------------------------------------------------------------------
 
 def _env(key: str) -> str:
@@ -109,7 +115,10 @@ def _env(key: str) -> str:
 
 
 def send_email(
-    api_key: str,
+    smtp_host: str,
+    smtp_port: int,
+    smtp_user: str,
+    smtp_password: str,
     from_email: str,
     from_name: str,
     to_email: str,
@@ -121,54 +130,44 @@ def send_email(
     dry_run: bool = False,
 ) -> bool:
 
-    payload = {
-        "personalizations": [{"to": [{"email": to_email}]}],
-        "from": {"email": from_email, "name": from_name},
-        "subject": subject,
-        "content": [
-            {"type": "text/plain", "value": text_body},
-            {"type": "text/html",  "value": html_body},
-        ],
-    }
-
-    if attachment_path and attachment_path.exists():
-        with open(attachment_path, "rb") as f:
-            encoded = base64.b64encode(f.read()).decode()
-        payload["attachments"] = [{
-            "content":     encoded,
-            "type":        "application/pdf",
-            "filename":    attachment_name,
-            "disposition": "attachment",
-        }]
-
     if dry_run:
         print(f"  [DRY RUN] Would send to {to_email}: {subject}")
-        if attachment_path:
+        if attachment_path and attachment_path.exists():
             print(f"  [DRY RUN] Attachment: {attachment_name} ({attachment_path.stat().st_size // 1024}KB)")
         return True
 
     try:
-        data = json.dumps(payload).encode()
-        req  = urllib.request.Request(
-            "https://api.sendgrid.com/v3/mail/send",
-            data    = data,
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type":  "application/json",
-            },
-            method = "POST",
-        )
-        with urllib.request.urlopen(req) as resp:
-            if resp.status in (200, 202):
-                return True
-            print(f"  [WARN] SendGrid returned {resp.status}")
-            return False
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode()[:300]
-        print(f"  [FAIL] SendGrid HTTP {exc.code}: {body}")
-        return False
+        # Outer container (mixed = body + attachment)
+        msg = MIMEMultipart("mixed")
+        msg["Subject"] = subject
+        msg["From"]    = f"{from_name} <{from_email}>"
+        msg["To"]      = to_email
+
+        # Text / HTML alternative pair
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(text_body, "plain", "utf-8"))
+        alt.attach(MIMEText(html_body, "html",  "utf-8"))
+        msg.attach(alt)
+
+        # Attachment
+        if attachment_path and attachment_path.exists():
+            with open(attachment_path, "rb") as f:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(f.read())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition",
+                            f'attachment; filename="{attachment_name}"')
+            msg.attach(part)
+
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(from_email, to_email, msg.as_string())
+        return True
+
     except Exception as exc:
-        print(f"  [FAIL] SendGrid error: {exc}")
+        print(f"  [FAIL] SMTP error: {exc}")
         return False
 
 
@@ -300,17 +299,20 @@ def _html_body(host_name: str, town_label: str, web_link: str | None) -> str:
 # ------------------------------------------------------------------
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Send Business Buzz host packs via SendGrid.")
+    ap = argparse.ArgumentParser(description="Send Business Buzz host packs via Zoho SMTP.")
     ap.add_argument("--dry-run", action="store_true", help="Print what would be sent without sending")
     ap.add_argument("--town", default="ALL", help="Town code or ALL")
     args = ap.parse_args()
 
     # Load credentials
     try:
-        api_key      = _env("SENDGRID_API_KEY")
-        from_email   = _env("SENDER_EMAIL")
-        from_name    = _env("SENDER_NAME")
-        pages_base   = os.environ.get("PAGES_BASE_URL", "").strip().rstrip("/")
+        smtp_host     = os.environ.get("SMTP_HOST", "smtp.zoho.eu").strip()
+        smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
+        smtp_user     = _env("SMTP_USER")
+        smtp_password = _env("SMTP_PASSWORD")
+        from_email    = _env("SENDER_EMAIL")
+        from_name     = _env("SENDER_NAME")
+        pages_base    = os.environ.get("PAGES_BASE_URL", "").strip().rstrip("/")
     except EnvironmentError as exc:
         print(f"[FAIL] {exc}")
         sys.exit(1)
@@ -372,7 +374,10 @@ def main() -> None:
         html_b  = _html_body(host_name, town_label, web_link)
 
         success = send_email(
-            api_key        = api_key,
+            smtp_host      = smtp_host,
+            smtp_port      = smtp_port,
+            smtp_user      = smtp_user,
+            smtp_password  = smtp_password,
             from_email     = from_email,
             from_name      = from_name,
             to_email       = to_email,
