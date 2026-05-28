@@ -18,6 +18,7 @@ on:
       - 'Buzz_Region_Curated/host_packs/*.html'
       - '!Buzz_Region_Curated/host_packs/buzz-tracker.html'
       - 'Buzz_Region_Curated/Region_Monthly_Combined.html'
+      - 'Buzz_Region_Curated/Region_Quarterly_Dashboard_*.html'
 
   # Manual trigger - click the button in GitHub's Actions tab
   workflow_dispatch:
@@ -114,7 +115,29 @@ jobs:
           fi
           python send_packs.py --rl-report $DRY_RUN
 
-      # -- 8. SUMMARY -------------------------------------------------------
+      # -- 8. SEND RL QUARTERLY DASHBOARD EMAIL ----------------------------
+      # Only runs when a quarterly dashboard file was pushed (or on manual trigger)
+      - name: Send RL quarterly dashboard email
+        if: |
+          github.event_name == 'workflow_dispatch' ||
+          contains(toJSON(github.event.commits), 'Region_Quarterly_Dashboard')
+        env:
+          SMTP_HOST:      smtp.zoho.eu
+          SMTP_PORT:      "587"
+          SMTP_USER:      ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:  ${{ secrets.SMTP_PASSWORD }}
+          SENDER_EMAIL:   ${{ secrets.SENDER_EMAIL }}
+          SENDER_NAME:    ${{ secrets.SENDER_NAME }}
+          PAGES_BASE_URL: ${{ secrets.PAGES_BASE_URL }}
+          RL_EMAIL:       ${{ secrets.RL_EMAIL }}
+        run: |
+          DRY_RUN=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            DRY_RUN="--dry-run"
+          fi
+          python send_packs.py --rl-quarterly $DRY_RUN
+
+      # -- 9. SUMMARY -------------------------------------------------------
       - name: Print summary
         run: |
           echo "## Reports Deployed and Sent" >> $GITHUB_STEP_SUMMARY
@@ -123,4 +146,5 @@ jobs:
           echo "- Event date: ${{ github.event.inputs.event_date || 'not specified' }}" >> $GITHUB_STEP_SUMMARY
           echo "- Dry run: ${{ github.event.inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
           echo "- Host packs sent: Market Harborough, Leicester, Lutterworth, Hinckley, Loughborough" >> $GITHUB_STEP_SUMMARY
-          echo "- RL report sent to: RL_EMAIL secret" >> $GITHUB_STEP_SUMMARY
+          echo "- RL monthly report sent to: RL_EMAIL secret" >> $GITHUB_STEP_SUMMARY
+          echo "- RL quarterly dashboard: sent if quarterly file was pushed" >> $GITHUB_STEP_SUMMARY

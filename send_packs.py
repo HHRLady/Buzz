@@ -2,16 +2,20 @@
 send_packs.py
 =============
 Converts HTML reports to PDF (using headless Chrome) and emails them
-via Zoho SMTP.  Supports two modes:
+via Zoho SMTP.  Supports three modes:
 
   Host pack mode (default):
     Sends each town's host pack to its host.
     python send_packs.py --town ALL
     python send_packs.py --town Leicester
 
-  RL report mode:
+  RL monthly report mode:
     Sends the monthly RL combined report to the Regional Lead.
     python send_packs.py --rl-report
+
+  RL quarterly report mode:
+    Sends the quarterly dashboard to the Regional Lead.
+    python send_packs.py --rl-quarterly
 
 Run by GitHub Actions after the build step. Not intended for local use.
 
@@ -30,7 +34,7 @@ Environment variables required (set as GitHub Secrets):
     HOST_EMAIL_HINCKLEY
     HOST_EMAIL_LOUGHBOROUGH
 
-  RL report mode only:
+  RL report modes only:
     RL_EMAIL                  Regional Lead email address
 
 Optional (defaults shown):
@@ -38,11 +42,13 @@ Optional (defaults shown):
     SMTP_PORT                 587
 
 Usage:
-    python send_packs.py                        (all host packs)
-    python send_packs.py --town Leicester       (single town)
-    python send_packs.py --rl-report            (RL monthly report)
-    python send_packs.py --dry-run              (no emails sent)
+    python send_packs.py                          (all host packs)
+    python send_packs.py --town Leicester         (single town)
+    python send_packs.py --rl-report              (RL monthly report)
+    python send_packs.py --rl-quarterly           (RL quarterly dashboard)
+    python send_packs.py --dry-run                (no emails sent)
     python send_packs.py --rl-report --dry-run
+    python send_packs.py --rl-quarterly --dry-run
 """
 
 import argparse
@@ -62,10 +68,11 @@ from pathlib import Path
 # CONFIG
 # ------------------------------------------------------------------
 
-SCRIPT_DIR     = Path(__file__).resolve().parent
-REGION_CURATED = SCRIPT_DIR / "Buzz_Region_Curated"
-PACKS_DIR      = REGION_CURATED / "host_packs"
-RL_REPORT_FILE = "Region_Monthly_Combined.html"
+SCRIPT_DIR              = Path(__file__).resolve().parent
+REGION_CURATED          = SCRIPT_DIR / "Buzz_Region_Curated"
+PACKS_DIR               = REGION_CURATED / "host_packs"
+RL_REPORT_FILE          = "Region_Monthly_Combined.html"
+RL_QUARTERLY_PATTERN    = "Region_Quarterly_Dashboard_*.html"
 
 MONTH_LABEL = date.today().strftime("%B %Y")
 
@@ -416,14 +423,117 @@ def _rl_html_body(web_link: str | None) -> str:
 
 
 # ------------------------------------------------------------------
+# RL QUARTERLY EMAIL CONTENT
+# ------------------------------------------------------------------
+
+def _rl_quarterly_text_body(web_link: str | None, q_label: str) -> str:
+    lines = [
+        "Hi Emma,",
+        "",
+        f"Your Leicestershire & Rutland quarterly dashboard for {q_label} is attached.",
+        "It covers regional attendance trends, cross-town visits, Event Excellence, and Buzz Plus activity across all towns.",
+        "",
+    ]
+    if web_link:
+        lines += [
+            "View it online:",
+            f"  {web_link}",
+            "",
+        ]
+    lines += [
+        "Business Buzz Leicestershire & Rutland",
+    ]
+    return "\n".join(lines)
+
+
+def _rl_quarterly_html_body(web_link: str | None, q_label: str) -> str:
+    teal   = "#00A19A"
+    orange = "#F39200"
+    dark   = "#111827"
+    muted  = "#6B7280"
+    light  = "#F9FAFB"
+
+    link_section = ""
+    if web_link:
+        link_section = f"""
+        <tr><td style="padding:16px 32px;background:{light};border-radius:8px;margin:0 32px">
+          <p style="margin:0 0 8px;font-size:13px;color:{muted};font-family:Gill Sans,Calibri,sans-serif">
+            View online:
+          </p>
+          <a href="{web_link}" style="color:{teal};font-size:13px;font-family:Gill Sans,Calibri,sans-serif">{web_link}</a>
+        </td></tr>
+        <tr><td style="padding:8px 0"></td></tr>"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#F3F4F6;font-family:'Century Gothic','Gill Sans',Calibri,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0">
+<tr><td align="center" style="padding:32px 16px">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px">
+
+  <!-- Header -->
+  <tr><td style="background:{teal};border-radius:12px 12px 0 0;padding:28px 32px 22px">
+    <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.6)">
+      Business Buzz &middot; Leicestershire &amp; Rutland
+    </p>
+    <p style="margin:0 0 4px;font-size:22px;font-weight:700;color:#fff">Quarterly dashboard</p>
+    <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.7)">{q_label}</p>
+  </td></tr>
+
+  <!-- Colour bar -->
+  <tr>
+    <td style="padding:0">
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td style="background:{teal};height:4px"></td>
+        <td style="background:{orange};height:4px"></td>
+        <td style="background:#D60B52;height:4px"></td>
+        <td style="background:#B6BD00;height:4px"></td>
+      </tr></table>
+    </td>
+  </tr>
+
+  <!-- Body -->
+  <tr><td style="background:#ffffff;border:1px solid #E5E7EB;border-top:none;border-radius:0 0 12px 12px;padding:28px 32px">
+    <table width="100%" cellpadding="0" cellspacing="0">
+
+      <tr><td style="padding:0 0 16px">
+        <p style="margin:0;font-size:15px;color:{dark}">Hi Emma,</p>
+      </td></tr>
+
+      <tr><td style="padding:0 0 16px">
+        <p style="margin:0;font-size:14px;color:{dark};line-height:1.6">
+          Your <strong>Leicestershire &amp; Rutland quarterly dashboard</strong> for
+          <strong>{q_label}</strong> is attached. It covers regional attendance trends,
+          cross-town visits, Event Excellence, and Buzz Plus activity across all towns.
+        </p>
+      </td></tr>
+
+      {link_section}
+
+      <tr><td style="padding:24px 0 0;border-top:1px solid #E5E7EB;margin-top:24px">
+        <p style="margin:0 0 4px;font-size:12px;color:{muted}">Business Buzz Leicestershire &amp; Rutland</p>
+      </td></tr>
+
+    </table>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
+
+# ------------------------------------------------------------------
 # MAIN
 # ------------------------------------------------------------------
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Send Business Buzz reports via Zoho SMTP.")
-    ap.add_argument("--dry-run",   action="store_true", help="Print what would be sent without sending")
-    ap.add_argument("--town",      default="ALL",       help="Town code or ALL (host pack mode)")
-    ap.add_argument("--rl-report", action="store_true", help="Send RL monthly report instead of host packs")
+    ap.add_argument("--dry-run",      action="store_true", help="Print what would be sent without sending")
+    ap.add_argument("--town",         default="ALL",       help="Town code or ALL (host pack mode)")
+    ap.add_argument("--rl-report",    action="store_true", help="Send RL monthly report instead of host packs")
+    ap.add_argument("--rl-quarterly", action="store_true", help="Send RL quarterly dashboard instead of host packs")
     args = ap.parse_args()
 
     # Load shared credentials
@@ -477,6 +587,65 @@ def main() -> None:
             subject         = subject,
             html_body       = _rl_html_body(web_link),
             text_body       = _rl_text_body(web_link),
+            attachment_path = attachment_path,
+            attachment_name = attachment_name,
+            dry_run         = args.dry_run,
+        )
+
+        if success:
+            print(f"  [OK] Sent to {to_email}")
+        else:
+            sys.exit(1)
+
+        return
+
+    # ── RL QUARTERLY MODE ─────────────────────────────────────────────
+    if args.rl_quarterly:
+        print("\n[RL QUARTERLY REPORT]")
+
+        # Find the quarterly dashboard — glob, sort by name (year_Q sorts correctly)
+        quarterly_files = sorted(REGION_CURATED.glob(RL_QUARTERLY_PATTERN))
+        if not quarterly_files:
+            print(f"  [SKIP] No quarterly dashboard found matching: {RL_QUARTERLY_PATTERN}")
+            sys.exit(0)
+
+        html_path         = quarterly_files[-1]
+        quarterly_filename = html_path.name
+
+        # Derive a human-readable quarter label from the filename
+        # e.g. Region_Quarterly_Dashboard_2026_Q2.html -> "2026 Q2"
+        q_label = (quarterly_filename
+                   .replace("Region_Quarterly_Dashboard_", "")
+                   .replace(".html", "")
+                   .replace("_", " "))
+
+        try:
+            to_email = _env("RL_EMAIL")
+        except EnvironmentError as exc:
+            print(f"  [FAIL] {exc}")
+            sys.exit(1)
+
+        # Convert to PDF
+        pdf_path  = REGION_CURATED / quarterly_filename.replace(".html", ".pdf")
+        has_pdf   = html_to_pdf(html_path, pdf_path)
+        attachment_path = pdf_path if has_pdf else html_path
+        attachment_name = (quarterly_filename.replace(".html", ".pdf") if has_pdf
+                           else quarterly_filename)
+
+        web_link = f"{pages_base}/{quarterly_filename}" if pages_base else None
+
+        subject = f"L&R quarterly dashboard — {q_label}"
+        success = send_email(
+            smtp_host       = smtp_host,
+            smtp_port       = smtp_port,
+            smtp_user       = smtp_user,
+            smtp_password   = smtp_password,
+            from_email      = from_email,
+            from_name       = from_name,
+            to_email        = to_email,
+            subject         = subject,
+            html_body       = _rl_quarterly_html_body(web_link, q_label),
+            text_body       = _rl_quarterly_text_body(web_link, q_label),
             attachment_path = attachment_path,
             attachment_name = attachment_name,
             dry_run         = args.dry_run,
