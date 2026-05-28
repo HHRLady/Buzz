@@ -45,7 +45,7 @@ jobs:
 
       # ── 2. SET UP PYTHON ─────────────────────────────────────────────
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -62,13 +62,13 @@ jobs:
       # ── 5. DEPLOY TO GITHUB PAGES ────────────────────────────────────
       # Uses the HTML files you pushed — no rebuild needed
       - name: Upload to GitHub Pages
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: Buzz_Region_Curated/host_packs
 
       - name: Deploy GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
       # ── 6. SEND EMAILS ───────────────────────────────────────────────
       - name: Send host pack emails
