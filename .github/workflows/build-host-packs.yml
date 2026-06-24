@@ -44,7 +44,7 @@ jobs:
     steps:
       # -- 1. CHECK OUT THE REPO -------------------------------------------
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       # -- 2. SET UP PYTHON -------------------------------------------------
       - name: Set up Python 3.12
@@ -118,9 +118,7 @@ jobs:
       # -- 8. SEND RL QUARTERLY DASHBOARD EMAIL ----------------------------
       # Only runs when a quarterly dashboard file was pushed (or on manual trigger)
       - name: Send RL quarterly dashboard email
-        if: |
-          github.event_name == 'workflow_dispatch' ||
-          contains(toJSON(github.event.commits), 'Region_Quarterly_Dashboard')
+        if: ${{ hashFiles('Buzz_Region_Curated/Region_Quarterly_Dashboard_*.html') != '' || github.event_name == 'workflow_dispatch' }}
         env:
           SMTP_HOST:      smtp.zoho.eu
           SMTP_PORT:      "587"
